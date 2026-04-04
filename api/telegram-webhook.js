@@ -1,5 +1,5 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { createNotionTaskPage } = require("./notionTaskPage");
+const { createNotionTaskPage, readNotionTasks, updateNotionTaskStatus } = require("./notionTaskPage");
 
 /**
  * @param {string} token
@@ -125,18 +125,16 @@ Today's date is 2026-04-04.`;
                 );
                 break;
             case "READ":
-                await telegramSendMessage(
-                    token,
-                    message.chat.id,
-                    `🔍 Intención detectada: Buscar tareas. (Función en desarrollo)`
-                );
+                {
+                    const reply = await readNotionTasks(taskData.FilterArea, taskData.FilterDate);
+                    await telegramSendMessage(token, message.chat.id, reply);
+                }
                 break;
             case "UPDATE":
-                await telegramSendMessage(
-                    token,
-                    message.chat.id,
-                    `🔄 Intención detectada: Actualizar tarea. (Función en desarrollo)`
-                );
+                {
+                    const reply = await updateNotionTaskStatus(taskData.SearchName, taskData.NewStatus);
+                    await telegramSendMessage(token, message.chat.id, reply);
+                }
                 break;
             default:
                 await telegramSendMessage(
