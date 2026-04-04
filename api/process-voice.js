@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { formidable } = require("formidable");
-const OpenAI = require("openai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createNotionTaskPage } = require("./notionTaskPage");
 
 module.exports = async function handler(req, res) {
@@ -32,26 +32,49 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: "Missing audioFile" });
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    let transcription;
+    // Read file as base64
+    let base64String;
     try {
-        transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(file.filepath),
-            model: "whisper-1",
-        });
+        const fileBuffer = fs.readFileSync(file.filepath);
+        base64String = fileBuffer.toString("base64");
     } catch (err) {
-        console.error("Whisper error:", err);
+        console.error("Failed to read audio file:", err);
+        try {
+            fs.unlinkSync(file.filepath);
+        } catch (_) {}
+        return res.status(500).json({ success: false, error: "Failed to read audio file" });
+    }
+
+    // Prepare Gemini client and model
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const audioPart = {
+        inlineData: {
+            data: base64String,
+            mimeType: file.mimetype,
+        },
+    };
+
+    const prompt = "You are an assistant. Listen to this audio and return exactly the text spoken, nothing else. Do not use markdown.";
+
+    let text = "";
+    try {
+        const result = await model.generateContent([prompt, audioPart]);
+        text = (await result.response.text() || "").trim();
+    } catch (err) {
+        console.error("Gemini speech-to-text error:", err);
         try {
             fs.unlinkSync(file.filepath);
         } catch (_) {}
         return res.status(500).json({ success: false, error: err.message || "Transcription failed" });
     }
 
+    // Cleanup temp file
     try {
         fs.unlinkSync(file.filepath);
     } catch (_) {}
 
-    const text = (transcription.text || "").trim();
     if (!text) {
         return res.status(400).json({ success: false, error: "Empty transcription" });
     }
