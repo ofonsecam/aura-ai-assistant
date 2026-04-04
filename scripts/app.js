@@ -3,6 +3,31 @@ const taskForm = document.getElementById("task-form");
 const taskInput = document.getElementById("task-input");
 const taskList = document.getElementById("task-list");
 const recordBtn = document.getElementById("record-btn");
+const toastNotification = document.getElementById("toast-notification");
+
+/** @type {ReturnType<typeof setTimeout> | null} */
+let toastHideTimer = null;
+
+/**
+ * Muestra un mensaje en la pastilla flotante y lo oculta a los 3 s.
+ * @param {string} message
+ * @param {"success" | "error"} type
+ */
+function showToast(message, type) {
+    if (!toastNotification) return;
+    if (toastHideTimer !== null) {
+        clearTimeout(toastHideTimer);
+        toastHideTimer = null;
+    }
+    toastNotification.textContent = message;
+    toastNotification.classList.remove("hidden", "success", "error");
+    toastNotification.classList.add(type === "success" ? "success" : "error");
+    toastNotification.classList.remove("hidden");
+    toastHideTimer = setTimeout(() => {
+        toastNotification.classList.add("hidden");
+        toastHideTimer = null;
+    }, 3000);
+}
 
 /** @type {MediaRecorder | null} */
 let mediaRecorder = null;
@@ -88,9 +113,13 @@ async function processVoiceRecording(chunks) {
         if (!res.ok) {
             throw new Error(data.error || `Request failed (${res.status})`);
         }
+        if (res.status === 200) {
+            showToast("Tarea guardada en Notion", "success");
+        }
         console.log("Voice → Notion OK:", data.transcription, data.notion);
     } catch (err) {
         console.error("Voice processing failed:", err);
+        showToast("Error al guardar la tarea", "error");
     } finally {
         recordBtn.disabled = false;
         recordBtn.classList.remove("voice-processing");

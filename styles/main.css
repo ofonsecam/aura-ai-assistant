@@ -197,6 +197,42 @@ body {
     outline: none;
 }
 
+/* --------- Toast notification --------- */
+#toast-notification {
+    position: fixed;
+    left: 50%;
+    bottom: clamp(1rem, 4vw, 2rem);
+    z-index: 1000;
+    max-width: min(90vw, 28rem);
+    padding: 0.75rem 1.35rem;
+    border-radius: 999px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: var(--font-main);
+    color: var(--white);
+    text-align: center;
+    box-shadow: 0 8px 28px rgba(44, 62, 80, 0.22);
+    transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s ease;
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    visibility: visible;
+    pointer-events: none;
+}
+
+#toast-notification.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-50%) translateY(12px);
+}
+
+#toast-notification.success {
+    background: #1e8449;
+}
+
+#toast-notification.error {
+    background: #c0392b;
+}
+
 /* --------- Centered Content Wrapper --------- */
 main > section,
 main > form,
