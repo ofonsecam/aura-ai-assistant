@@ -45,9 +45,12 @@ module.exports = async function handler(req, res) {
         return res.status(500).json({ success: false, error: "Failed to read audio file" });
     }
 
-    // Prepare Gemini client and model
+    // Prepare Gemini client and model with JSON response config
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
+    });
 
     const audioPart = {
         inlineData: {
@@ -56,18 +59,28 @@ module.exports = async function handler(req, res) {
         },
     };
 
-    const prompt = "You are an assistant. Listen to this audio and return exactly the text spoken, nothing else. Do not use markdown.";
+    const prompt = `You are an expert task extraction assistant. Listen to the audio and output a strict, raw JSON object (no markdown, no backticks).
 
+The JSON must have exactly these three keys:
+
+1. "Name": (string) A concise, actionable title for the task.
+
+2. "Area": (string) Categorize the task. You MUST choose EXACTLY ONE of these options: "Trabajo secundario", "Trabajo Traffix", "Iglesia", "Familia", "Carrera", "IA Dev", "Universidad", or "Personales". If unsure, use "Personales".
+
+3. "Fecha": (string) If the audio mentions a deadline or specific day, calculate the date and output it in ISO format YYYY-MM-DD. Today's date is 2026-04-04. If no date is mentioned, return an empty string "".`
+
+    let jsonResponse;
     let text = "";
     try {
         const result = await model.generateContent([prompt, audioPart]);
         text = (await result.response.text() || "").trim();
+        jsonResponse = JSON.parse(text);
     } catch (err) {
-        console.error("Gemini speech-to-text error:", err);
+        console.error("Gemini structured response error:", err);
         try {
             fs.unlinkSync(file.filepath);
         } catch (_) {}
-        return res.status(500).json({ success: false, error: err.message || "Transcription failed" });
+        return res.status(500).json({ success: false, error: err.message || "Transcription or parsing failed" });
     }
 
     // Cleanup temp file
@@ -75,25 +88,25 @@ module.exports = async function handler(req, res) {
         fs.unlinkSync(file.filepath);
     } catch (_) {}
 
-    if (!text) {
-        return res.status(400).json({ success: false, error: "Empty transcription" });
+    if (!jsonResponse || typeof jsonResponse !== "object" || !jsonResponse.Name) {
+        return res.status(400).json({ success: false, error: "Invalid or empty structured transcription", transcription: text });
     }
 
     let notionData;
     try {
-        notionData = await createNotionTaskPage(text);
+        notionData = await createNotionTaskPage(jsonResponse);
     } catch (err) {
         console.error("Notion error:", err);
         return res.status(500).json({
             success: false,
             error: err.message || "Notion create failed",
-            transcription: text,
+            transcription: jsonResponse,
         });
     }
 
     return res.status(200).json({
         success: true,
-        transcription: text,
+        transcription: jsonResponse,
         notion: notionData,
     });
 };
