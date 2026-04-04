@@ -1,0 +1,60 @@
+/* Global Variables */
+:root {
+    --primary-color: #2c3e50;
+    --secondary-color: #ecf0f1;
+    --accent-color: #27ae60;
+    --text-color: #333;
+    --white: #ffffff;
+}
+
+/* Base Styles */
+body {
+    background-color: var(--secondary-color);
+    color: var(--text-color);
+    font-family: 'Open Sans', sans-serif;
+    line-height: 1.6;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    border-bottom: 3px solid var(--primary-color);
+    margin-bottom: 30px;
+}
+
+h1, h2 {
+    font-family: 'Montserrat', sans-serif;
+    color: var(--primary-color);
+}
+
+section {
+    background-color: var(--white);
+    padding: 20px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* Color Schema Display */
+.color-box {
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 5px;
+    font-weight: bold;
+    border: 1px solid #ddd;
+}
+
+.primary { background-color: var(--primary-color); color: var(--white); }
+.secondary { background-color: var(--secondary-color); color: var(--text-color); }
+.accent { background-color: var(--accent-color); color: var(--white); }
+
+/* Wireframe Representation */
+.wireframe-mockup {
+    border: 2px dashed var(--primary-color);
+    padding: 20px;
+    margin-top: 15px;
+    background-color: #f9f9f9;
+    text-align: center;
+}

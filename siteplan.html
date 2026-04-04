@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Planner - Site Plan</title>
+    <meta name="description" content="Site planning document for Aura Planner, a personal task management tool.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles/siteplan.css">
+</head>
+<body>
+    <header>
+        <h1>Aura Planner: Site Plan</h1>
+        <p>Oscar Fonseca - WDD 131</p>
+    </header>
+    <main>
+        <section>
+            <h2>Site Name</h2>
+            <p><strong>Aura Planner</strong></p>
+            <p>
+                I chose this name because it evokes a sense of calm and clarity, which is essential for a task management tool. 
+                The goal is for the user to feel in control of their personal "aura" or environment.
+            </p>
+        </section>
+
+        <section>
+            <h2>Site Purpose</h2>
+            <p>
+                Aura Planner is a personal task manager designed as a Frontend MVP. 
+                Its purpose is to provide a clean, fast interface for users to capture and manage daily tasks without distractions, 
+                using local data persistence (localStorage). 
+                The site also includes a Contact page so users can reach the developer with suggestions or questions.
+            </p>
+        </section>
+
+        <section>
+            <h2>Scenarios</h2>
+            <ul>
+                <li>
+                    "I just remembered I need to buy materials for my BYU course; how can I quickly add this task and ensure it won't be deleted when I close the browser?"
+                </li>
+                <li>
+                    "I have finished my first task of the day; where can I view my current list to remove the completed item and stay organized?"
+                </li>
+                <li>
+                    "How can I reach the developer if I have a suggestion for Aura Planner?"
+                </li>
+            </ul>
+        </section>
+
+        <section id="colors">
+            <h2>Color Schema</h2>
+            <p>The palette is inspired by productivity and serenity:</p>
+            <div class="color-box primary">Primary: #2c3e50 (Midnight Blue) - Used for headings and navigation.</div>
+            <div class="color-box secondary">Secondary: #ecf0f1 (Clouds) - Used for backgrounds and reading areas.</div>
+            <div class="color-box accent">Accent: #27ae60 (Nephritis Green) - Used for action buttons and confirmations.</div>
+        </section>
+
+        <section id="typography">
+            <h2>Typography</h2>
+            <p><strong>Montserrat:</strong> For headings (H1, H2, H3) to provide a modern and professional look.</p>
+            <p><strong>Open Sans:</strong> For body text and task lists, prioritizing readability on mobile screens.</p>
+        </section>
+
+        <section>
+            <h2>Wireframes</h2>
+            <div class="wireframe-mockup">
+                <h3>Multi-Page Site Structure</h3>
+                <ul>
+                    <li>
+                        <strong>Home:</strong> Landing page introducing Aura Planner, with a hero section, project introduction, and navigation links.
+                    </li>
+                    <li>
+                        <strong>My Planner (App):</strong> The main app interface supporting adding, viewing, and deleting tasks.
+                    </li>
+                    <li>
+                        <strong>Contact:</strong> Simple contact form for reaching the developer.
+                    </li>
+                </ul>
+                <p>
+                    The layout is responsive, with a single-column stack on mobile and navigation header at the top on all pages. 
+                    On desktop, content is centered in a max-width container. 
+                    Navigation appears on every page, allowing users to move between Home, My Planner, and Contact pages.
+                </p>
+                <p>
+                    <strong>Mobile Example:</strong> [Header: Logo + Nav] → [Main: Page Content] → [Footer]<br>
+                    <strong>Desktop Example:</strong> [Header: Logo + Nav] → [Main: Page Content centered] → [Footer]
+                </p>
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2026 Aura Planner Site Plan - Oscar Fonseca</p>
+    </footer>
+</body>
+</html>
