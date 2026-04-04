@@ -87,6 +87,9 @@ body {
 /* --------- TASK FORM --------- */
 #task-form {
     display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
     gap: 1rem;
     margin-bottom: 2rem;
 }
@@ -103,6 +106,76 @@ body {
 
 #task-input:focus {
     border-color: #2980b9;
+}
+
+#record-btn {
+    flex-shrink: 0;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 0.5rem 0.75rem;
+    font-size: 1.35rem;
+    line-height: 1;
+    border: 1px solid #bdc3c7;
+    border-radius: 0.5rem;
+    background: var(--secondary);
+    color: var(--primary);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+#record-btn:hover,
+#record-btn:focus-visible {
+    border-color: var(--primary);
+    background: #dfe6e9;
+    outline: none;
+}
+
+#record-btn:active:not(.recording) {
+    transform: scale(0.96);
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.55);
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
+    }
+}
+
+.recording {
+    animation: pulse 1s infinite;
+}
+
+#record-btn.recording {
+    border-color: #e74c3c;
+    background: rgba(231, 76, 60, 0.12);
+}
+
+@keyframes voice-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+#record-btn.voice-processing {
+    position: relative;
+    cursor: wait;
+    color: transparent;
+}
+
+#record-btn.voice-processing::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    margin: auto;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(44, 62, 80, 0.25);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: voice-spin 0.65s linear infinite;
+    pointer-events: none;
 }
 
 #add-task {

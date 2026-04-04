@@ -2,6 +2,14 @@
 const taskForm = document.getElementById("task-form");
 const taskInput = document.getElementById("task-input");
 const taskList = document.getElementById("task-list");
+const recordBtn = document.getElementById("record-btn");
+
+/** @type {MediaRecorder | null} */
+let mediaRecorder = null;
+/** @type {MediaStream | null} */
+let micStream = null;
+/** @type {Blob[]} */
+let audioChunks = [];
 
 // Initialize tasks array from localStorage or as empty array
 let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
@@ -50,3 +58,78 @@ taskList.addEventListener("click", function(e) {
 });
 
 renderTasks();
+
+/**
+ * Envía el audio a Whisper + Notion; la API devuelve transcripción y página creada.
+ * @param {Blob[]} chunks
+ */
+async function processVoiceRecording(chunks) {
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    console.log("Audio Blob captured!");
+
+    if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+        micStream = null;
+    }
+    mediaRecorder = null;
+    audioChunks = [];
+    recordBtn.classList.remove("recording");
+
+    recordBtn.disabled = true;
+    recordBtn.classList.add("voice-processing");
+    recordBtn.setAttribute("aria-busy", "true");
+
+    const formData = new FormData();
+    formData.append("audioFile", blob, "recording.webm");
+
+    try {
+        const res = await fetch("/api/process-voice", { method: "POST", body: formData });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || `Request failed (${res.status})`);
+        }
+        console.log("Voice → Notion OK:", data.transcription, data.notion);
+    } catch (err) {
+        console.error("Voice processing failed:", err);
+    } finally {
+        recordBtn.disabled = false;
+        recordBtn.classList.remove("voice-processing");
+        recordBtn.removeAttribute("aria-busy");
+    }
+}
+
+/**
+ * Toggle voice recording: first click requests mic and starts MediaRecorder;
+ * second click stops, builds an audio/webm Blob, and sends it for transcription.
+ */
+recordBtn.addEventListener("click", async () => {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        return;
+    }
+
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const options = MediaRecorder.isTypeSupported("audio/webm")
+            ? { mimeType: "audio/webm" }
+            : {};
+        mediaRecorder = new MediaRecorder(micStream, options);
+        audioChunks = [];
+
+        mediaRecorder.addEventListener("dataavailable", (e) => {
+            if (e.data && e.data.size > 0) {
+                audioChunks.push(e.data);
+            }
+        });
+
+        mediaRecorder.addEventListener("stop", () => {
+            void processVoiceRecording(audioChunks.slice());
+        });
+
+        mediaRecorder.start();
+        recordBtn.classList.add("recording");
+    } catch (err) {
+        console.error("Microphone access failed:", err);
+        recordBtn.classList.remove("recording");
+    }
+});
