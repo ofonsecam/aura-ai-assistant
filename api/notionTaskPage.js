@@ -26,7 +26,7 @@ async function createNotionTaskPage(taskData) {
 
     // Si existe Area, agregarla con el campo acentuado exacto
     if (typeof taskData.Area === "string" && taskData.Area.trim()) {
-        properties["Área"] = {
+        properties["Area"] = {
             select: { name: taskData.Area },
         };
     }
