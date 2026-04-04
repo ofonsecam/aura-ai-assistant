@@ -89,4 +89,42 @@ async function readNotionTasks(filterArea, filterDate) {
     return '📋 Tus tareas:\n' + taskStrings.join('\n');
 }
 
-module.exports = { createNotionTaskPage, updateNotionTaskStatus, readNotionTasks };
+async function deleteNotionTask(searchName) {
+    // Find the task page
+    const queryRes = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            filter: { property: 'Name', title: { contains: searchName } }
+        })
+    });
+
+    const data = await queryRes.json();
+
+    if (!data.results || data.results.length === 0) {
+        return `❌ No encontré ninguna tarea que coincida con "${searchName}".`;
+    }
+
+    const pageId = data.results[0].id;
+
+    // Archive via PATCH
+    await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: {
+            'Authorization': `Bearer ${notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            archived: true
+        })
+    });
+
+    return `🗑️ Tarea "${searchName}" eliminada correctamente.`;
+}
+
+module.exports = { createNotionTaskPage, updateNotionTaskStatus, readNotionTasks, deleteNotionTask };

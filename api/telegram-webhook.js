@@ -1,5 +1,5 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { createNotionTaskPage, readNotionTasks, updateNotionTaskStatus } = require("./notionTaskPage");
+const { createNotionTaskPage, readNotionTasks, updateNotionTaskStatus, deleteNotionTask } = require("./notionTaskPage");
 
 /**
  * Envía mensajes a Telegram mediante la API oficial.
@@ -42,6 +42,15 @@ module.exports = async function handler(req, res) {
             let hechoMatch = text.match(/^hecho\s+(.+)/i);
             if (hechoMatch) {
                 const reply = await updateNotionTaskStatus(hechoMatch[1].trim(), "Hecho");
+                await telegramSendMessage(token, chatId, reply);
+                return res.status(200).send("OK");
+            }
+
+            // NUEVO: BORRADO RÁPIDO: Si empieza con "borrar ", elimina la tarea.
+            let borrarMatch = text.match(/^borrar\s+(.+)/i);
+            if (borrarMatch) {
+                const taskName = borrarMatch[1].trim();
+                const reply = await deleteNotionTask(taskName);
                 await telegramSendMessage(token, chatId, reply);
                 return res.status(200).send("OK");
             }
