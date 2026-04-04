@@ -30,36 +30,43 @@ module.exports = async function handler(req, res) {
         return res.status(200).send("OK");
     }
 
-    if (!message.voice) {
-        try {
-            await telegramSendMessage(
-                token,
-                message.chat.id,
-                "Por favor, envíame una nota de voz."
-            );
-        } catch (err) {
-            console.error(err);
-        }
-        return res.status(200).send("OK");
-    }
-
     try {
-        const fileId = message.voice.file_id;
-        const getFileRes = await fetch(
-            `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`
-        );
-        const getFileJson = await getFileRes.json();
-        if (!getFileJson.ok || !getFileJson.result?.file_path) {
-            throw new Error("getFile failed or missing file_path");
-        }
-        const filePath = getFileJson.result.file_path;
+        let geminiInputPart = null;
+        let userInputIsAudio = false;
 
-        const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
-        if (!fileRes.ok) {
-            throw new Error(`Voice file download failed: ${fileRes.status}`);
+        // Prepare Gemini input (text part or inlineData part)
+        if (typeof message.text === "string" && message.text.trim().length > 0) {
+            geminiInputPart = { text: message.text.trim() };
+        } else if (message.voice?.file_id) {
+            // Download the voice as in previous logic
+            const fileId = message.voice.file_id;
+            const getFileRes = await fetch(
+                `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`
+            );
+            const getFileJson = await getFileRes.json();
+            if (!getFileJson.ok || !getFileJson.result?.file_path) {
+                throw new Error("getFile failed or missing file_path");
+            }
+            const filePath = getFileJson.result.file_path;
+
+            const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+            if (!fileRes.ok) {
+                throw new Error(`Voice file download failed: ${fileRes.status}`);
+            }
+            const arrayBuffer = await fileRes.arrayBuffer();
+            const base64Audio = Buffer.from(arrayBuffer).toString("base64");
+
+            geminiInputPart = {
+                inlineData: {
+                    data: base64Audio,
+                    mimeType: "audio/ogg"
+                }
+            };
+            userInputIsAudio = true;
+        } else {
+            await telegramSendMessage(token, message.chat.id, "No se encontró texto ni audio para procesar.");
+            return res.status(200).send("OK");
         }
-        const arrayBuffer = await fileRes.arrayBuffer();
-        const base64Audio = Buffer.from(arrayBuffer).toString("base64");
 
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({
@@ -67,38 +74,78 @@ module.exports = async function handler(req, res) {
             generationConfig: { responseMimeType: "application/json" },
         });
 
-        const prompt = `You are an expert task extraction assistant. Listen to the audio and output a strict, raw JSON object (no markdown, no backticks).
+        // New intent router prompt as instructed
+        const prompt = `You are an AI assistant. Analyze the user's input (text or audio) and determine their intent. Output a strict JSON object.
 
-The JSON must have exactly these three keys:
+The JSON MUST have an "Intent" key, which must be exactly one of: "CREATE", "READ", or "UPDATE".
 
-1. "Name": (string) A concise, actionable title for the task.
+If Intent is "CREATE" (user wants to add a new task):
 
-2. "Area": (string) Categorize the task. You MUST choose EXACTLY ONE of these options: "Trabajo secundario", "Trabajo Traffix", "Iglesia", "Familia", "Carrera", "IA Dev", "Universidad", or "Personales". If unsure, use "Personales".
+Include: "Name" (task title), "Area" (Must be exactly: Trabajo secundario, Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, or Personales), and "Fecha" (YYYY-MM-DD or empty).
 
-3. "Fecha": (string) If the audio mentions a deadline or specific day, calculate the date and output it in ISO format YYYY-MM-DD. Today's date is 2026-04-04. If no date is mentioned, return an empty string "".`;
+If Intent is "READ" (user is asking what tasks they have):
 
-        const audioPart = {
-            inlineData: {
-                data: base64Audio,
-                mimeType: "audio/ogg",
-            },
-        };
+Include: "FilterArea" (The area they are asking about, use the exact Area list or empty if asking generally) and "FilterDate" (YYYY-MM-DD or empty).
 
-        const result = await model.generateContent([prompt, audioPart]);
+If Intent is "UPDATE" (user wants to change a task status):
+
+Include: "SearchName" (The title of the task they want to update) and "NewStatus" (Must be exactly: Pausado, Hecho, Haciendo, or Pendiente).
+
+Today's date is 2026-04-04.`;
+
+        const partsArray = [prompt, geminiInputPart];
+
+        const result = await model.generateContent(partsArray);
+
         const textOut = (await result.response.text() || "").trim();
-        const taskData = JSON.parse(textOut);
 
-        if (!taskData || typeof taskData !== "object" || !taskData.Name) {
-            throw new Error("Invalid or empty structured transcription");
+        let taskData;
+        try {
+            taskData = JSON.parse(textOut);
+        } catch (e) {
+            throw new Error("Respuesta de Gemini no es un JSON válido: " + textOut);
         }
 
-        await createNotionTaskPage(taskData);
+        if (!taskData || typeof taskData !== "object" || !taskData.Intent) {
+            throw new Error("No se detectó intención o JSON inválido de Gemini.");
+        }
 
-        await telegramSendMessage(
-            token,
-            message.chat.id,
-            "✅ Tarea guardada: " + taskData.Name + " en " + taskData.Area
-        );
+        switch (taskData.Intent) {
+            case "CREATE":
+                if (!taskData.Name || !taskData.Area || typeof taskData.Fecha === "undefined") {
+                    await telegramSendMessage(token, message.chat.id, "Faltan datos para crear la tarea. Intenta de nuevo.");
+                    break;
+                }
+                await createNotionTaskPage(taskData);
+                await telegramSendMessage(
+                    token,
+                    message.chat.id,
+                    `✅ Tarea creada: ${taskData.Name} en ${taskData.Area}` +
+                        (taskData.Fecha && taskData.Fecha.length > 0 ? ` para el ${taskData.Fecha}` : "")
+                );
+                break;
+            case "READ":
+                await telegramSendMessage(
+                    token,
+                    message.chat.id,
+                    `🔍 Intención detectada: Buscar tareas. (Función en desarrollo)`
+                );
+                break;
+            case "UPDATE":
+                await telegramSendMessage(
+                    token,
+                    message.chat.id,
+                    `🔄 Intención detectada: Actualizar tarea. (Función en desarrollo)`
+                );
+                break;
+            default:
+                await telegramSendMessage(
+                    token,
+                    message.chat.id,
+                    "No entendí la acción."
+                );
+                break;
+        }
     } catch (err) {
         console.error(err);
         try {
