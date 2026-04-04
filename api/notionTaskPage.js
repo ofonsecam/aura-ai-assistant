@@ -1,9 +1,11 @@
 const { Client } = require('@notionhq/client');
 
-const notion = new Client({ auth: process.env.NOTION_TOKEN });
+// No instanciamos el cliente aquí de forma global para evitar "TypeError: is not a function"
 const databaseId = process.env.NOTION_DATABASE_ID;
 
 async function createNotionTaskPage(taskData) {
+    const notion = new Client({ auth: process.env.NOTION_TOKEN }); // Instancia fresca
+
     const properties = {
         'Name': {
             title: [{ text: { content: taskData.Name } }]
@@ -33,14 +35,11 @@ async function createNotionTaskPage(taskData) {
     return response;
 }
 
-/**
- * Updates the Estado (status) of a Notion Task by searching for a task whose Name contains searchName.
- * @param {string} searchName
- * @param {string} newStatus
- * @returns {Promise<string>}
- */
 async function updateNotionTaskStatus(searchName, newStatus) {
-    const queryRes = await notion.databases.query({
+    const notion = new Client({ auth: process.env.NOTION_TOKEN }); // Instancia fresca
+
+    // 1. Buscar la tarea por nombre
+    const response = await notion.databases.query({
         database_id: databaseId,
         filter: {
             property: 'Name',
@@ -50,14 +49,16 @@ async function updateNotionTaskStatus(searchName, newStatus) {
         }
     });
 
-    if (!queryRes.results || queryRes.results.length === 0) {
-        return '❌ No encontré ninguna tarea que coincida con ese nombre';
+    if (response.results.length === 0) {
+        return `❌ No encontré ninguna tarea que coincida con "${searchName}".`;
     }
 
-    const taskId = queryRes.results[0].id;
+    // 2. Tomar el ID de la primera coincidencia
+    const pageId = response.results[0].id;
 
+    // 3. Actualizar el estado
     await notion.pages.update({
-        page_id: taskId,
+        page_id: pageId,
         properties: {
             'Estado': {
                 select: { name: newStatus }
@@ -65,73 +66,61 @@ async function updateNotionTaskStatus(searchName, newStatus) {
         }
     });
 
-    return '✅ Tarea movida a: ' + newStatus;
+    return `✅ Tarea "${searchName}" movida a: ${newStatus}`;
 }
 
-/**
- * Reads tasks from Notion, optionally filtering by Area and/or Date.
- * @param {string} filterArea
- * @param {string} filterDate
- * @returns {Promise<string>}
- */
 async function readNotionTasks(filterArea, filterDate) {
-    let filters = [];
+    const notion = new Client({ auth: process.env.NOTION_TOKEN }); // Instancia fresca
+    const filters = [];
 
+    // Filtro dinámico de Área
     if (filterArea) {
         filters.push({
-            property: 'Area',
-            select: {
-                equals: filterArea
-            }
+            property: 'Area', 
+            select: { equals: filterArea }
         });
     }
 
+    // Filtro dinámico de Fecha
     if (filterDate) {
         filters.push({
             property: 'Fecha',
-            date: {
-                equals: filterDate
-            }
+            date: { equals: filterDate }
         });
     }
 
-    // Default: show pending tasks (not 'Hecho') if no filters are given
+    // Si no pides un área ni fecha específica, te mostramos todo lo que NO esté 'Hecho'
     if (filters.length === 0) {
         filters.push({
             property: 'Estado',
-            select: {
-                does_not_equal: 'Hecho'
-            }
+            select: { does_not_equal: 'Hecho' }
         });
     }
 
-    const queryRes = await notion.databases.query({
+    // Ejecutar la consulta con los filtros combinados
+    const response = await notion.databases.query({
         database_id: databaseId,
-        filter: filters.length === 1 ? filters[0] : { and: filters }
+        filter: { and: filters }
     });
 
-    if (!queryRes.results || queryRes.results.length === 0) {
-        return 'No hay tareas con esos criterios.';
+    if (response.results.length === 0) {
+        return '🔍 No tienes tareas pendientes con esos criterios.';
     }
 
-    const tasksList = queryRes.results.map(page => {
-        // Extract title (Name), Estado
-        const nameProp = page.properties['Name'];
-        const estadoProp = page.properties['Estado'];
-        const title = nameProp && nameProp.title.length > 0
-            ? nameProp.title[0].plain_text
-            : 'Sin título';
-        const estado = estadoProp && estadoProp.select && estadoProp.select.name
-            ? estadoProp.select.name
-            : 'Desconocido';
-        return `- ${title} (${estado})`;
-    }).join('\n');
+    // Formatear la lista para Telegram
+    const taskStrings = response.results.map(page => {
+        const nameObj = page.properties['Name']?.title[0];
+        const nameText = nameObj ? nameObj.text.content : 'Sin título';
+        const estadoObj = page.properties['Estado']?.select;
+        const estadoText = estadoObj ? estadoObj.name : 'Sin estado';
+        return `- ${nameText} (${estadoText})`;
+    });
 
-    return tasksList;
+    return '📋 Tus tareas:\n' + taskStrings.join('\n');
 }
 
-module.exports = {
-    createNotionTaskPage,
-    updateNotionTaskStatus,
-    readNotionTasks
+module.exports = { 
+    createNotionTaskPage, 
+    updateNotionTaskStatus, 
+    readNotionTasks 
 };
