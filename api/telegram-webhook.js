@@ -25,7 +25,21 @@ module.exports = async function handler(req, res) {
     try {
         // --- 1. COMANDOS INSTANTÁNEOS (Costo 0 IA) ---
         if (text === "/start") {
-            await telegramSendMessage(token, chatId, "🚀 Aura AI Online. \n\nUsa /lista para ver pendientes.\nUsa 'hecho [nombre]' para completar.\nUsa '+ [nombre]' para creación rápida.\nO envía un audio para procesar con IA.");
+            await telegramSendMessage(
+                token,
+                chatId,
+                "🚀 Aura AI Online.\n\nEnvía /help o 'ayuda' para ver el menú completo.\n\nUsa /lista para ver pendientes.\nUsa 'hecho [nombre]' para completar.\nUsa '+ [nombre]' para creación rápida.\nO envía un audio para procesar con IA."
+            );
+            return res.status(200).send("OK");
+        }
+
+        // --- NUEVO: MENSAJE DE AYUDA GENERAL (/help o "ayuda") ---
+        if (/^\/help$|^ayuda$/i.test(text)) {
+            const helpMsg =
+                "📝 *Gestión*: /lista, hecho [nombre], pausar [nombre], borrar [nombre].\n" +
+                "\n⚡ *Creación Rápida*: + [nombre].\n" +
+                "\n🎙️ *IA*: Envía un audio o texto complejo para que Gemini lo procese.";
+            await telegramSendMessage(token, chatId, helpMsg);
             return res.status(200).send("OK");
         }
 
@@ -42,6 +56,14 @@ module.exports = async function handler(req, res) {
             let hechoMatch = text.match(/^hecho\s+(.+)/i);
             if (hechoMatch) {
                 const reply = await updateNotionTaskStatus(hechoMatch[1].trim(), "Hecho");
+                await telegramSendMessage(token, chatId, reply);
+                return res.status(200).send("OK");
+            }
+
+            // NUEVO: PAUSAR tarea: Si empieza con "pausar ", cambia a 'Pausado'.
+            let pausarMatch = text.match(/^pausar\s+(.+)/i);
+            if (pausarMatch) {
+                const reply = await updateNotionTaskStatus(pausarMatch[1].trim(), "Pausado");
                 await telegramSendMessage(token, chatId, reply);
                 return res.status(200).send("OK");
             }
