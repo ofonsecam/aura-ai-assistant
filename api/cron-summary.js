@@ -5,13 +5,22 @@ export default async function handler(req, res) {
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
     try {
-        const tasks = await readNotionTasks("", ""); // Lee todas las tareas pendientes
+        const tasks = await readNotionTasks("", "");
         const now = new Date();
-        const hour = now.getUTCHours(); // Trabajaremos con UTC
+        const hour = now.getUTCHours(); 
+        const minutes = now.getUTCMinutes();
 
-        // Determinar el saludo según la hora UTC (Colombia es UTC-5)
-        // 12 UTC = 7 AM COT | 21 UTC = 4 PM COT
-        let greeting = hour < 15 ? "🌅 ¡Buenos días, Oscar! Aquí tienes tus pendientes:" : "🌆 Recordatorio de la tarde:";
+        let greeting;
+        // Lógica basada en la hora UTC para determinar el saludo correcto
+        if (hour === 12) { 
+            greeting = "🌅 ¡Buenos días, Oscar! Comienza tu jornada con estos pendientes:";
+        } else if (hour === 17) { 
+            greeting = "🍱 Control de mediodía. Así va tu lista de tareas:";
+        } else if (hour === 21) { 
+            greeting = "🌆 Cierre de tarde. Esto es lo que quedó pendiente:";
+        } else {
+            greeting = "📋 Resumen de tareas actualizado:";
+        }
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
