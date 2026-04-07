@@ -1,22 +1,46 @@
-const { Client } = require('@notionhq/client');
-
 const databaseId = process.env.NOTION_DATABASE_ID;
 const notionToken = process.env.NOTION_TOKEN;
 
-async function createNotionTaskPage(taskData) {
-    const notion = new Client({ auth: notionToken });
-    const properties = {
-        'Name': { title: [{ text: { content: taskData.Name } }] },
-        'Estado': { select: { name: 'Pendiente' } }
-    };
-    if (taskData.Area) properties['Area'] = { select: { name: taskData.Area } };
-    if (taskData.Fecha) properties['Fecha'] = { date: { start: taskData.Fecha } };
-
-    return await notion.pages.create({ parent: { database_id: databaseId }, properties });
+/**
+ * Calcula la distancia de Levenshtein para permitir errores ortográficos.
+ * Referencia: Levenshtein (1966).
+ */
+function getLevenshteinDistance(a, b) {
+    if (a === b) return 0;
+    const al = a.length, bl = b.length;
+    if (!al || !bl) return Math.max(al, bl);
+    const matrix = Array.from({ length: bl + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= al; j++) matrix[0][j] = j;
+    for (let i = 1; i <= bl; i++) {
+        for (let j = 1; j <= al; j++) {
+            const cost = b[i-1].toLowerCase() === a[j-1].toLowerCase() ? 0 : 1;
+            matrix[i][j] = Math.min(matrix[i-1][j] + 1, matrix[i][j-1] + 1, matrix[i-1][j-1] + cost);
+        }
+    }
+    return matrix[bl][al];
 }
 
-async function updateNotionTaskStatus(searchName, newStatus) {
-    // Bypass del SDK: Petición HTTP nativa a Notion
+/**
+ * Resuelve fechas relativas ajustadas a la zona horaria de Colombia (UTC-5).
+ */
+function resolveNaturalDate(input) {
+    if (!input) return input;
+    // Ajuste manual de zona horaria para Colombia en servidores UTC
+    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Bogota"}));
+    
+    if (/^hoy$/i.test(input)) {
+        return now.toISOString().slice(0, 10);
+    } else if (/^mañana$|^manana$/i.test(input)) {
+        now.setDate(now.getDate() + 1);
+        return now.toISOString().slice(0, 10);
+    }
+    return input;
+}
+
+/**
+ * Busca la página más similar que no esté 'Hecha'.
+ */
+async function findBestFuzzyMatch(searchName) {
     const queryRes = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: {
@@ -25,32 +49,73 @@ async function updateNotionTaskStatus(searchName, newStatus) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            filter: { property: 'Name', title: { contains: searchName } }
+            filter: { property: 'Estado', select: { does_not_equal: 'Hecho' } }
         })
     });
-    
     const data = await queryRes.json();
-    
-    if (!data.results || data.results.length === 0) {
-        return `❌ No encontré ninguna tarea que coincida con "${searchName}".`;
+    if (!data.results || data.results.length === 0) return null;
+
+    let bestMatch = { pageId: null, name: '', distance: Infinity };
+    const target = searchName.trim().toLowerCase();
+
+    for (const page of data.results) {
+        const pageName = page.properties?.['Name']?.title?.[0]?.text?.content?.trim() || '';
+        if (!pageName) continue;
+        
+        const dist = getLevenshteinDistance(target, pageName.toLowerCase());
+        if (dist < bestMatch.distance) {
+            bestMatch = { pageId: page.id, name: pageName, distance: dist };
+        }
     }
 
-    const pageId = data.results[0].id;
+    // Umbral dinámico: la distancia no debe superar el 40% de la longitud de la palabra encontrada
+    const threshold = Math.max(2, Math.floor(bestMatch.name.length * 0.4));
+    return bestMatch.distance <= threshold ? bestMatch : null;
+}
 
-    // Actualización directa vía HTTP PATCH
-    await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+async function createNotionTaskPage(taskData) {
+    let name = (taskData.Name || '').trim();
+    let area = taskData.Area || 'Personales';
+    let fecha = resolveNaturalDate(taskData.Fecha);
+
+    if (/\b(URGENTE|YA|IMPORTANTE)\b/i.test(name)) {
+        if (!name.startsWith('🚨')) name = '🚨 ' + name;
+        if (area === 'Personales') area = 'IA Dev';
+    }
+
+    const properties = {
+        'Name': { title: [{ text: { content: name } }] },
+        'Estado': { select: { name: 'Pendiente' } },
+        'Area': { select: { name: area } }
+    };
+    if (fecha) properties['Fecha'] = { date: { start: fecha } };
+
+    const result = await fetch(`https://api.notion.com/v1/pages`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ parent: { database_id: databaseId }, properties })
+    });
+    return result.ok ? await result.json() : `❌ Error Notion: ${result.status}`;
+}
+
+async function updateNotionTaskStatus(searchName, newStatus) {
+    const match = await findBestFuzzyMatch(searchName);
+    if (!match) return `❌ No encontré una tarea similar a "${searchName}".`;
+
+    const result = await fetch(`https://api.notion.com/v1/pages/${match.pageId}`, {
         method: 'PATCH',
         headers: {
             'Authorization': `Bearer ${notionToken}`,
             'Notion-Version': '2022-06-28',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-            properties: { 'Estado': { select: { name: newStatus } } }
-        })
+        body: JSON.stringify({ properties: { 'Estado': { select: { name: newStatus } } } })
     });
-
-    return `✅ Tarea "${searchName}" movida a: ${newStatus}`;
+    return result.ok ? `✅ "${match.name}" movida a ${newStatus}` : `❌ Error al actualizar.`;
 }
 
 async function readNotionTasks(filterArea, filterDate) {
@@ -59,72 +124,39 @@ async function readNotionTasks(filterArea, filterDate) {
     if (filterDate) filters.push({ property: 'Fecha', date: { equals: filterDate } });
     if (filters.length === 0) filters.push({ property: 'Estado', select: { does_not_equal: 'Hecho' } });
 
-    // Bypass del SDK: Consulta nativa
-    const queryRes = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+    const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${notionToken}`,
             'Notion-Version': '2022-06-28',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-            filter: filters.length === 1 ? filters[0] : { and: filters }
-        })
+        body: JSON.stringify({ filter: filters.length === 1 ? filters[0] : { and: filters } })
     });
+    const data = await res.json();
+    if (!data.results?.length) return '🔍 Sin pendientes.';
     
-    const data = await queryRes.json();
-    
-    if (!data.results || data.results.length === 0) {
-        return '🔍 No tienes tareas pendientes con esos criterios.';
-    }
-
-    const taskStrings = data.results.map(page => {
-        const nameObj = page.properties['Name']?.title[0];
-        const nameText = nameObj ? nameObj.text.content : 'Sin título';
-        const estadoObj = page.properties['Estado']?.select;
-        const estadoText = estadoObj ? estadoObj.name : 'Sin estado';
-        return `- ${nameText} (${estadoText})`;
-    });
-
-    return '📋 Tus tareas:\n' + taskStrings.join('\n');
+    return '📋 Tus tareas:\n' + data.results.map(p => {
+        const n = p.properties['Name']?.title[0]?.text?.content || 'Sin título';
+        const e = p.properties['Estado']?.select?.name || '---';
+        return `- ${n} (${e})`;
+    }).join('\n');
 }
 
 async function deleteNotionTask(searchName) {
-    // Find the task page
-    const queryRes = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${notionToken}`,
-            'Notion-Version': '2022-06-28',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            filter: { property: 'Name', title: { contains: searchName } }
-        })
-    });
+    const match = await findBestFuzzyMatch(searchName);
+    if (!match) return `❌ No pude encontrar "${searchName}" para eliminar.`;
 
-    const data = await queryRes.json();
-
-    if (!data.results || data.results.length === 0) {
-        return `❌ No encontré ninguna tarea que coincida con "${searchName}".`;
-    }
-
-    const pageId = data.results[0].id;
-
-    // Archive via PATCH
-    await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+    const res = await fetch(`https://api.notion.com/v1/pages/${match.pageId}`, {
         method: 'PATCH',
         headers: {
             'Authorization': `Bearer ${notionToken}`,
             'Notion-Version': '2022-06-28',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-            archived: true
-        })
+        body: JSON.stringify({ archived: true })
     });
-
-    return `🗑️ Tarea "${searchName}" eliminada correctamente.`;
+    return res.ok ? `🗑️ "${match.name}" eliminada correctamente.` : `❌ Error al eliminar.`;
 }
 
 module.exports = { createNotionTaskPage, updateNotionTaskStatus, readNotionTasks, deleteNotionTask };
