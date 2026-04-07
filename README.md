@@ -2,6 +2,10 @@
 
 Aura AI conecta Telegram, Notion y modelos de IA para capturar tareas por voz o texto, organizarlas y recordarte lo pendiente.
 
+## Description
+
+Desarrollé un ecosistema de automatización proactiva integrando Telegram Bot API y Notion API mediante Node.js y Vercel Serverless Functions. Implementé un sistema de enrutamiento híbrido para optimizar el consumo de tokens de LLM (Gemini API), delegando comandos deterministas a un motor de búsqueda difusa (Algoritmo de Levenshtein). El sistema incluye procesos proactivos (Cron Jobs) para el análisis de cumplimiento de plazos y generación de reportes de productividad semanal, operando bajo una arquitectura de bajo costo y alta disponibilidad.
+
 ## Features
 
 - **Hybrid Routing** — Enrutamiento flexible entre comandos, notas de voz y flujos automáticos.
