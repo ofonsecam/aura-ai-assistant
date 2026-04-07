@@ -1,20 +1,132 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { createNotionTaskPage, readNotionTasks, updateNotionTaskStatus, deleteNotionTask } = require("./notionTaskPage");
+const {
+    createNotionTaskPage,
+    readNotionTasks,
+    updateNotionTaskStatus,
+    deleteNotionTask,
+} = require("./notionTaskPage");
 
-/**
- * Envía mensajes a Telegram mediante la API oficial.
- */
-async function telegramSendMessage(token, chatId, text) {
+// Helper to send normal text message
+async function telegramSendMessage(token, chatId, text, extra = {}) {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
+        body: JSON.stringify({ chat_id: chatId, text, ...extra }),
+    });
+}
+
+// Helper for inline keyboard with Markdown
+async function telegramSendTaskList(token, chatId, notionTasks) {
+    // notionTasks is an array of task objects [{pageId, name, estado}]
+    // Format: - {name} ({estado})
+    let message = "📋 Tus tareas:\n";
+    if (!notionTasks.length) {
+        message += "🔍 Sin pendientes.";
+        await telegramSendMessage(token, chatId, message);
+        return;
+    }
+    message += notionTasks
+        .map((t, i) => `- ${t.name} (${t.estado})`)
+        .join("\n");
+
+    // Inline keyboard: for each task, one row with three buttons
+    const inline_keyboard = notionTasks.map((t) => [
+        {
+            text: "✅ Hecho",
+            callback_data: `done:${t.pageId}`
+        },
+        {
+            text: "⏸️ Pausar",
+            callback_data: `pause:${t.pageId}`
+        },
+        {
+            text: "🗑️ Borrar",
+            callback_data: `delete:${t.pageId}`
+        }
+    ]);
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: chatId,
+            text: message,
+            reply_markup: JSON.stringify({ inline_keyboard })
+        })
+    });
+}
+
+// Helper to answer callback query (shows small toast in Telegram)
+async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "✅ Actualizado") {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callback_query_id: callbackQueryId, text, show_alert: false }),
+    });
+}
+
+// To retrieve tasks with pageId for inline keyboard UI
+async function getNotionTasksForInline(filterArea, filterDate) {
+    // Re-implementing, since readNotionTasks returns formatted text
+    // So we call Notion API manually
+    const { NOTION_DATABASE_ID: databaseId, NOTION_TOKEN: notionToken } = process.env;
+    const filters = [];
+    if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
+    if (filterDate) filters.push({ property: 'Fecha', date: { equals: filterDate } });
+    if (filters.length === 0) filters.push({ property: 'Estado', select: { does_not_equal: 'Hecho' } });
+    const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            filter: filters.length === 1 ? filters[0] : { and: filters }
+        })
+    });
+    const data = await res.json();
+    if (!data.results?.length) return [];
+    return data.results.map(p => {
+        return {
+            pageId: p.id,
+            name: p.properties["Name"]?.title?.[0]?.text?.content || "Sin título",
+            estado: p.properties["Estado"]?.select?.name || "---"
+        };
     });
 }
 
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") return res.status(200).send("OK");
 
+    // --- HANDLE CALLBACK_QUERY ---
+    if (req.body?.callback_query) {
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        const callback = req.body.callback_query;
+        const data = callback.data || "";
+        const chatId = callback.message.chat.id;
+        const callbackQueryId = callback.id;
+        let [action, pageId] = data.split(":");
+        action = action?.trim();
+        pageId = pageId?.trim();
+        try {
+            if (action && pageId) {
+                if (action === "done") {
+                    await updateNotionTaskStatus(pageId, "Hecho", true); // true = by pageId (see below)
+                } else if (action === "pause") {
+                    await updateNotionTaskStatus(pageId, "Pausado", true);
+                } else if (action === "delete") {
+                    // deleteNotionTask support by pageId
+                    await deleteNotionTask(pageId, true);
+                }
+            }
+            await telegramAnswerCallbackQuery(token, callbackQueryId, "✅ Actualizado");
+        } catch (err) {
+            await telegramAnswerCallbackQuery(token, callbackQueryId, "❌ Error");
+        }
+        return res.status(200).send("OK");
+    }
+
+    // --- Normal Telegram message workflow ---
     const message = req.body?.message;
     if (!message) return res.status(200).send("OK");
 
@@ -47,8 +159,8 @@ module.exports = async function handler(req, res) {
         if (text.length > 0) {
             // Lectura rápida de tareas
             if (/^\/?lista$|^ver$|^tareas$/i.test(text)) {
-                const reply = await readNotionTasks("", "");
-                await telegramSendMessage(token, chatId, reply);
+                const taskObjs = await getNotionTasksForInline("", "");
+                await telegramSendTaskList(token, chatId, taskObjs);
                 return res.status(200).send("OK");
             }
 
@@ -133,8 +245,13 @@ module.exports = async function handler(req, res) {
                     await telegramSendMessage(token, chatId, `✅ Tarea creada: ${taskData.Name} (${taskData.Area})`);
                     break;
                 case "READ":
-                    const list = await readNotionTasks(taskData.FilterArea, taskData.FilterDate);
-                    await telegramSendMessage(token, chatId, list);
+                    {
+                        const taskObjs = await getNotionTasksForInline(
+                            taskData.FilterArea,
+                            taskData.FilterDate
+                        );
+                        await telegramSendTaskList(token, chatId, taskObjs);
+                    }
                     break;
                 case "UPDATE":
                     const updateMsg = await updateNotionTaskStatus(taskData.SearchName, taskData.NewStatus);
@@ -151,7 +268,6 @@ module.exports = async function handler(req, res) {
                 throw gemErr;
             }
         }
-
     } catch (err) {
         console.error("Critical Webhook Error:", err);
         await telegramSendMessage(token, chatId, "❌ Error crítico. Revisa los logs de Vercel.");
