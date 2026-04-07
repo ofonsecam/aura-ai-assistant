@@ -31,7 +31,15 @@ async function findBestFuzzyMatch(searchName) {
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filter: { property: 'Estado', select: { does_not_equal: 'Hecho' } } })
+        body: JSON.stringify({ 
+            filter: { 
+                or: [
+                    { property: 'Estado', select: { equals: 'Pendiente' } },
+                    { property: 'Estado', select: { equals: 'Haciendo' } },
+                    { property: 'Estado', select: { equals: 'Pausado' } }
+                ] 
+            } 
+        })
     });
     const data = await res.json();
     if (!data.results?.length) return null;
@@ -69,54 +77,73 @@ async function createNotionTaskPage(taskData) {
     return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
 }
 
-async function updateNotionTaskStatus(searchName, newStatus) {
-    const match = await findBestFuzzyMatch(searchName);
-    if (!match) return `❌ No encontré similar a "${searchName}".`;
-    const res = await fetch(`https://api.notion.com/v1/pages/${match.pageId}`, {
+async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
+    let pageId = isId ? searchNameOrId : null;
+    let taskName = "Tarea";
+
+    if (!isId) {
+        const match = await findBestFuzzyMatch(searchNameOrId);
+        if (!match) return `❌ No encontré similar a "${searchNameOrId}".`;
+        pageId = match.pageId;
+        taskName = match.name;
+    }
+
+    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
         headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties: { 'Estado': { select: { name: newStatus } } } })
     });
-    return res.ok ? `✅ "${match.name}" movida a ${newStatus}` : `❌ Error al actualizar.`;
+    return res.ok ? `✅ Tarea actualizada a ${newStatus}` : `❌ Error al actualizar.`;
 }
 
 async function readNotionTasks(filterArea, filterDate) {
     const filters = [];
     if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
     if (filterDate) filters.push({ property: 'Fecha', date: { equals: filterDate } });
-    if (filters.length === 0) filters.push({ property: 'Estado', select: { does_not_equal: 'Hecho' } });
+    
+    // Filtro por defecto: Todo lo que NO esté hecho
+    if (filters.length === 0) {
+        filters.push({
+            or: [
+                { property: 'Estado', select: { equals: 'Pendiente' } },
+                { property: 'Estado', select: { equals: 'Haciendo' } },
+                { property: 'Estado', select: { equals: 'Pausado' } }
+            ]
+        });
+    }
+
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
         body: JSON.stringify({ filter: filters.length === 1 ? filters[0] : { and: filters } })
     });
     const data = await res.json();
-    if (!data.results?.length) {
-        return {
-            text: '🔍 Sin pendientes.',
-            tasks: []
-        };
-    }
-    const tasks = data.results.map(p => ({
+    
+    if (!data.results?.length) return { text: '🔍 Sin pendientes.', tasks: [] };
+
+    const tasks = data.results.map((p, i) => ({
         id: p.id,
-        name: p.properties['Name']?.title[0]?.text?.content || 'Sin título'
+        name: p.properties['Name']?.title[0]?.text?.content || 'Sin título',
+        status: p.properties['Estado']?.select?.name || '---'
     }));
-    const textLines = tasks.map((t, idx) => `${idx + 1}. ${t.name}`);
-    return {
-        text: '📋 Tus tareas:\n' + textLines.join('\n'),
-        tasks
-    };
+
+    const text = '📋 Tus tareas:\n' + tasks.map((t, i) => `${i + 1}. ${t.name} (${t.status})`).join('\n');
+    return { text, tasks };
 }
 
-async function deleteNotionTask(searchName) {
-    const match = await findBestFuzzyMatch(searchName);
-    if (!match) return `❌ No encontré "${searchName}".`;
-    const res = await fetch(`https://api.notion.com/v1/pages/${match.pageId}`, {
+async function deleteNotionTask(searchNameOrId, isId = false) {
+    let pageId = isId ? searchNameOrId : null;
+    if (!isId) {
+        const match = await findBestFuzzyMatch(searchNameOrId);
+        if (!match) return `❌ No encontré "${searchNameOrId}".`;
+        pageId = match.pageId;
+    }
+    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
         headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
         body: JSON.stringify({ archived: true })
     });
-    return res.ok ? `🗑️ "${match.name}" eliminada correctamente.` : `❌ Error al eliminar.`;
+    return res.ok ? `🗑️ Tarea eliminada correctamente.` : `❌ Error al eliminar.`;
 }
 
 async function getOverdueTasks() {
@@ -128,7 +155,7 @@ async function getOverdueTasks() {
         body: JSON.stringify({
             filter: {
                 and: [
-                    { property: 'Estado', select: { does_not_equal: 'Hecho' } },
+                    { or: [{ property: 'Estado', select: { equals: 'Pendiente' } }, { property: 'Estado', select: { equals: 'Haciendo' } }] },
                     { property: 'Fecha', date: { before: todayStr } }
                 ]
             }
