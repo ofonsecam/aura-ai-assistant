@@ -1,16 +1,20 @@
 {
-    "crons": [
-      {
-        "path": "/api/cron-summary",
-        "schedule": "30 12 * * *"
-      },
-      {
-        "path": "/api/cron-summary",
-        "schedule": "30 17 * * *"
-      },
-      {
-        "path": "/api/cron-summary",
-        "schedule": "30 21 * * *"
-      }
-    ]
-  }
+  "crons": [
+    {
+      "path": "/api/cron-summary",
+      "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/cron-summary",
+      "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/cron-summary",
+      "schedule": "30 21 * * *"
+    },
+    {
+      "path": "/api/cron-weekly",
+      "schedule": "0 1 * * 1"
+    }
+  ]
+}
