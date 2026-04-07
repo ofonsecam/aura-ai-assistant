@@ -15,10 +15,9 @@ async function telegramSendMessage(token, chatId, text, extra = {}) {
     });
 }
 
-// Helper for inline keyboard with Markdown
+// Helper for inline keyboard with numbered buttons using readNotionTasks
 async function telegramSendTaskList(token, chatId, notionTasks) {
-    // notionTasks is an array of task objects [{pageId, name, estado}]
-    // Format: - {name} ({estado})
+    // notionTasks is an array of task objects [{id, name, estado}]
     let message = "📋 Tus tareas:\n";
     if (!notionTasks.length) {
         message += "🔍 Sin pendientes.";
@@ -29,19 +28,19 @@ async function telegramSendTaskList(token, chatId, notionTasks) {
         .map((t, i) => `- ${t.name} (${t.estado})`)
         .join("\n");
 
-    // Inline keyboard: for each task, one row with three buttons
-    const inline_keyboard = notionTasks.map((t) => [
+    // Inline keyboard: for each task, one row with three buttons with numbers
+    const inline_keyboard = notionTasks.map((t, i) => [
         {
-            text: "✅ Hecho",
-            callback_data: `done:${t.pageId}`
+            text: `✅ ${i + 1}`,
+            callback_data: `done:${t.id}`
         },
         {
-            text: "⏸️ Pausar",
-            callback_data: `pause:${t.pageId}`
+            text: `⏸️ ${i + 1}`,
+            callback_data: `pause:${t.id}`
         },
         {
-            text: "🗑️ Borrar",
-            callback_data: `delete:${t.pageId}`
+            text: `🗑️ ${i + 1}`,
+            callback_data: `delete:${t.id}`
         }
     ]);
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -64,35 +63,20 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "✅ A
     });
 }
 
-// To retrieve tasks with pageId for inline keyboard UI
+// To retrieve tasks with id for inline keyboard UI using readNotionTasks
 async function getNotionTasksForInline(filterArea, filterDate) {
-    // Re-implementing, since readNotionTasks returns formatted text
-    // So we call Notion API manually
-    const { NOTION_DATABASE_ID: databaseId, NOTION_TOKEN: notionToken } = process.env;
-    const filters = [];
-    if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
-    if (filterDate) filters.push({ property: 'Fecha', date: { equals: filterDate } });
-    if (filters.length === 0) filters.push({ property: 'Estado', select: { does_not_equal: 'Hecho' } });
-    const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${notionToken}`,
-            'Notion-Version': '2022-06-28',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            filter: filters.length === 1 ? filters[0] : { and: filters }
-        })
-    });
-    const data = await res.json();
-    if (!data.results?.length) return [];
-    return data.results.map(p => {
-        return {
-            pageId: p.id,
-            name: p.properties["Name"]?.title?.[0]?.text?.content || "Sin título",
-            estado: p.properties["Estado"]?.select?.name || "---"
-        };
-    });
+    // Assumes readNotionTasks returns [{id, name, estado, ...}]
+    // If you want to filter by Area/Date, add those features to readNotionTasks if needed
+    let tasks = await readNotionTasks(filterArea, filterDate);
+    if (!tasks || !Array.isArray(tasks)) return [];
+    // Ensure the returned objects have id, name, estado
+    return tasks
+        .filter(t => t && t.id && t.name)
+        .map(t => ({
+            id: t.id,
+            name: t.name,
+            estado: t.estado || "---"
+        }));
 }
 
 module.exports = async function handler(req, res) {
@@ -159,8 +143,10 @@ module.exports = async function handler(req, res) {
         if (text.length > 0) {
             // Lectura rápida de tareas
             if (/^\/?lista$|^ver$|^tareas$/i.test(text)) {
-                const taskObjs = await getNotionTasksForInline("", "");
-                await telegramSendTaskList(token, chatId, taskObjs);
+                // Actualiza: usa readNotionTasks para obtener tareas y genera botones numerados
+                const notionTasks = await readNotionTasks();
+                // notionTasks debe ser [{id, name, estado}]
+                await telegramSendTaskList(token, chatId, notionTasks);
                 return res.status(200).send("OK");
             }
 
@@ -246,11 +232,14 @@ module.exports = async function handler(req, res) {
                     break;
                 case "READ":
                     {
-                        const taskObjs = await getNotionTasksForInline(
-                            taskData.FilterArea,
-                            taskData.FilterDate
-                        );
-                        await telegramSendTaskList(token, chatId, taskObjs);
+                        // Si se dispara "READ" desde Gemini, también usa readNotionTasks
+                        let notionTasks;
+                        if (taskData.FilterArea || taskData.FilterDate) {
+                            notionTasks = await readNotionTasks(taskData.FilterArea, taskData.FilterDate);
+                        } else {
+                            notionTasks = await readNotionTasks();
+                        }
+                        await telegramSendTaskList(token, chatId, notionTasks);
                     }
                     break;
                 case "UPDATE":

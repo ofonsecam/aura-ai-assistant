@@ -91,12 +91,21 @@ async function readNotionTasks(filterArea, filterDate) {
         body: JSON.stringify({ filter: filters.length === 1 ? filters[0] : { and: filters } })
     });
     const data = await res.json();
-    if (!data.results?.length) return '🔍 Sin pendientes.';
-    return '📋 Tus tareas:\n' + data.results.map(p => {
-        const n = p.properties['Name']?.title[0]?.text?.content || 'Sin título';
-        const e = p.properties['Estado']?.select?.name || '---';
-        return `- ${n} (${e})`;
-    }).join('\n');
+    if (!data.results?.length) {
+        return {
+            text: '🔍 Sin pendientes.',
+            tasks: []
+        };
+    }
+    const tasks = data.results.map(p => ({
+        id: p.id,
+        name: p.properties['Name']?.title[0]?.text?.content || 'Sin título'
+    }));
+    const textLines = tasks.map((t, idx) => `${idx + 1}. ${t.name}`);
+    return {
+        text: '📋 Tus tareas:\n' + textLines.join('\n'),
+        tasks
+    };
 }
 
 async function deleteNotionTask(searchName) {
