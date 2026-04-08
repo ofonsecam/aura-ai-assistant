@@ -5,7 +5,8 @@ export default async function handler(req, res) {
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
     try {
-        const tasks = await readNotionTasks("", "");
+        // CORRECCIÓN: Desestructuramos para obtener solo el texto del objeto
+        const { text: tasksText } = await readNotionTasks("", "");
         const overdue = await getOverdueTasks();
         
         const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Bogota"}));
@@ -16,7 +17,8 @@ export default async function handler(req, res) {
         else if (hour < 15) greeting = "🍱 Control de mediodía. Así va tu lista de tareas:";
         else greeting = "🌆 Cierre de tarde. Esto es lo que quedó pendiente:";
         
-        let message = `${greeting}\n\n${tasks}`;
+        // Usamos tasksText que contiene el string numerado
+        let message = `${greeting}\n\n${tasksText}`;
 
         if (overdue.length > 0) {
             const overdueList = overdue.map(p => {
