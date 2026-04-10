@@ -11,98 +11,68 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
     });
 }
 
-async function answerCallback(token, callbackQueryId, text) {
-    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
-    });
-}
-
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") return res.status(200).send("OK");
     const token = process.env.TELEGRAM_BOT_TOKEN;
-
-    if (req.body.callback_query) {
-        const cb = req.body.callback_query;
-        const [action, pageId] = cb.data.split(':');
-        let reply = "";
-        if (action === "done") reply = await updateNotionTaskStatus(pageId, "Hecho", true);
-        else if (action === "pause") reply = await updateNotionTaskStatus(pageId, "Pausado", true);
-        else if (action === "doing") reply = await updateNotionTaskStatus(pageId, "Haciendo", true);
-        else if (action === "del") reply = await deleteNotionTask(pageId, true);
-        await answerCallback(token, cb.id, "Procesado");
-        await telegramSendMessage(token, cb.message.chat.id, reply);
-        return res.status(200).send("OK");
-    }
-
     const message = req.body?.message;
     if (!message) return res.status(200).send("OK");
     const chatId = message.chat.id;
-    let text = (typeof message.text === "string" ? message.text.trim() : "");
+
+    // Manejar Callbacks (botones) rápido
+    if (req.body.callback_query) {
+        const cb = req.body.callback_query;
+        const [action, pageId] = cb.data.split(':');
+        const reply = await (action === "done" ? updateNotionTaskStatus(pageId, "Hecho", true) : updateNotionTaskStatus(pageId, "Haciendo", true));
+        await telegramSendMessage(token, chatId, reply);
+        return res.status(200).send("OK");
+    }
 
     try {
-        if (text === "/start") {
-            await telegramSendMessage(token, chatId, "🚀 Aura AI Online. Usa /lista o envía un audio.");
-            return res.status(200).send("OK");
-        }
+        const text = (message.text || "").trim();
 
-        // --- BYPASS DE IA: COMANDOS MANUALES ---
-        if (/^\/?lista$|^ver$|^tareas$/i.test(text)) {
+        // Comandos rápidos
+        if (text === "/lista" || text === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
-            const keyboard = {
-                inline_keyboard: tasks.map((t, i) => [
-                    { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
-                    { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` },
-                    { text: `⏸️ ${i + 1}`, callback_data: `pause:${t.id}` },
-                    { text: `🗑️ ${i + 1}`, callback_data: `del:${t.id}` }
-                ])
-            };
+            const keyboard = { inline_keyboard: tasks.slice(0, 8).map((t, i) => [{ text: `✅ ${i + 1}`, callback_data: `done:${t.id}` }, { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` }]) };
             await telegramSendMessage(token, chatId, listText, keyboard);
             return res.status(200).send("OK");
         }
 
-        // --- PROCESAMIENTO DE AUDIO O TEXTO CON GEMINI ---
-        let geminiInputPart = null;
-
-        if (message.voice?.file_id) {
-            await telegramSendMessage(token, chatId, "🎤 Procesando audio... un momento.");
-            const getFileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`);
-            const getFileJson = await getFileRes.json();
-            const fileUrl = `https://api.telegram.org/file/bot${token}/${getFileJson.result.file_path}`;
+        // --- PROCESAMIENTO DE AUDIO ---
+        if (message.voice) {
+            await telegramSendMessage(token, chatId, "⏳ Descargando y analizando audio...");
             
-            const fileRes = await fetch(fileUrl);
-            const buffer = Buffer.from(await fileRes.arrayBuffer());
-            geminiInputPart = { inlineData: { data: buffer.toString("base64"), mimeType: "audio/ogg" } };
-        } else if (text && !text.startsWith('+') && !text.startsWith('/')) {
-            geminiInputPart = { text };
-        }
+            // 1. Obtener archivo de Telegram
+            const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
+            const audioBuffer = await (await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`)).arrayBuffer();
+            const base64Audio = Buffer.from(audioBuffer).toString("base64");
 
-        if (geminiInputPart) {
+            // 2. Llamar a Gemini
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ 
-                model: "gemini-2.5-flash", 
-                generationConfig: { responseMimeType: "application/json" } 
-            });
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Modelo estable y veloz
 
-            const systemPrompt = `You are a task manager. Return RAW JSON. Intent: CREATE, READ, UPDATE. Areas: Trabajo secundario, Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales. Current date: 2026-04-09.`;
-            
-            const result = await model.generateContent([systemPrompt, geminiInputPart]);
-            const responseText = result.response.text();
-            const taskData = JSON.parse(responseText);
+            const prompt = `Analiza este audio y responde ÚNICAMENTE con un JSON crudo:
+            {"Intent": "CREATE", "Name": "nombre de la tarea", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
+            Categorías: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
+            Hoy es: 2026-04-09.`;
 
+            const result = await model.generateContent([prompt, { inlineData: { data: base64Audio, mimeType: "audio/ogg" } }]);
+            const cleanJson = result.response.text().replace(/```json|```/g, "").trim();
+            const taskData = JSON.parse(cleanJson);
+
+            // 3. Crear en Notion
             if (taskData.Intent === "CREATE") {
                 await createNotionTaskPage(taskData);
-                await telegramSendMessage(token, chatId, `✅ Tarea creada desde audio: *${taskData.Name}*`);
-            } else if (taskData.Intent === "READ") {
-                const { text: readText } = await readNotionTasks(taskData.FilterArea, taskData.FilterDate);
-                await telegramSendMessage(token, chatId, readText);
+                await telegramSendMessage(token, chatId, `✅ **Tarea creada:** ${taskData.Name}\n📍 **Área:** ${taskData.Area}`);
+            } else {
+                await telegramSendMessage(token, chatId, "🤔 No entendí la intención de crear una tarea.");
             }
         }
 
     } catch (err) {
-        console.error("ERROR WEBHOOK:", err);
-        await telegramSendMessage(token, chatId, `⚠️ Error técnico: ${err.message}. Verifica tu API KEY de Gemini en Vercel.`);
+        console.error(err);
+        await telegramSendMessage(token, chatId, `⚠️ **Error en proceso:** ${err.message.substring(0, 100)}...`);
     }
+
     return res.status(200).send("OK");
 };
