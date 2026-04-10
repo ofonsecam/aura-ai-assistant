@@ -1,4 +1,3 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createNotionTaskPage, readNotionTasks, updateNotionTaskStatus, deleteNotionTask } = require("./notionTaskPage");
 
 async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
@@ -11,12 +10,42 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
     });
 }
 
+// Función de Bypass para Gemini (Usa la API v1 estable directamente)
+async function callGeminiDirect(audioDataBase64, prompt) {
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    
+    const payload = {
+        contents: [{
+            parts: [
+                { inlineData: { mimeType: "audio/ogg", data: audioDataBase64 } },
+                { text: prompt }
+            ]
+        }],
+        generationConfig: { responseMimeType: "application/json" }
+    };
+
+    const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error?.message || "Error en la comunicación con Google");
+    }
+
+    const data = await res.json();
+    return data.candidates[0].content.parts[0].text;
+}
+
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") return res.status(200).send("OK");
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const message = req.body?.message;
     const cb = req.body?.callback_query;
 
+    // 1. GESTIÓN DE BOTONES (Costo 0 IA - Conservamos avance Fase 6)
     if (cb) {
         const [action, pageId] = cb.data.split(':');
         let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
@@ -30,6 +59,7 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
+        // 2. BYPASS DE IA (Ahorro de tokens - Comandos manuales)
         if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
             const keyboard = {
@@ -43,39 +73,34 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        // 3. PROCESAMIENTO DE VOZ (Bypass SDK - Forzamos v1 estable)
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
+            await telegramSendMessage(token, chatId, "🎙️ Analizando audio con protocolo estable...");
+            
             const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
             const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`);
             const audioData = Buffer.from(await audioRes.arrayBuffer()).toString("base64");
 
-            // --- CONFIGURACIÓN CORREGIDA ---
-            // Forzamos el uso del modelo estable sin prefijos extraños
-            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
-
-            const prompt = `Analiza el audio y responde SOLO JSON crudo: 
+            const prompt = `Analiza el audio y responde SOLO JSON: 
             {"Intent": "CREATE", "Name": "título", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
-            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.`;
+            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
+            Hoy es: 2026-04-09.`;
 
-            const result = await model.generateContent([
-                { inlineData: { data: audioData, mimeType: "audio/ogg" } },
-                { text: prompt }
-            ]);
-
-            const responseText = result.response.text().replace(/```json|```/g, "").trim();
-            const taskData = JSON.parse(responseText);
+            const responseText = await callGeminiDirect(audioData, prompt);
+            const cleanJson = responseText.replace(/```json|```/g, "").trim();
+            const taskData = JSON.parse(cleanJson);
 
             if (taskData.Intent === "CREATE") {
                 await createNotionTaskPage(taskData);
-                await telegramSendMessage(token, chatId, `✅ **Tarea creada:** ${taskData.Name}`);
+                await telegramSendMessage(token, chatId, `✅ **Tarea creada por voz:** ${taskData.Name}`);
             }
             return res.status(200).send("OK");
         }
+
     } catch (err) {
         console.error(err);
-        // Respuesta más limpia para el usuario
-        await telegramSendMessage(token, chatId, `⚠️ No pude procesar el audio. Intenta de nuevo o usa texto.`);
+        await telegramSendMessage(token, chatId, `⚠️ Error en Aura AI: ${err.message}`);
     }
+
     return res.status(200).send("OK");
 };
