@@ -10,19 +10,19 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
     });
 }
 
-// Función de Bypass corregida con sintaxis REST (snake_case)
+// Función de Bypass con sintaxis REST oficial (camelCase)
 async function callGeminiDirect(audioDataBase64, prompt) {
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
     
     const payload = {
         contents: [{
             parts: [
-                { inline_data: { mime_type: "audio/ogg", data: audioDataBase64 } },
+                { inlineData: { mimeType: "audio/ogg", data: audioDataBase64 } },
                 { text: prompt }
             ]
         }],
-        generation_config: { 
-            response_mime_type: "application/json" 
+        generationConfig: { 
+            responseMimeType: "application/json" 
         }
     };
 
@@ -47,6 +47,7 @@ module.exports = async function handler(req, res) {
     const message = req.body?.message;
     const cb = req.body?.callback_query;
 
+    // 1. GESTIÓN DE BOTONES (Costo 0 IA)
     if (cb) {
         const [action, pageId] = cb.data.split(':');
         let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
@@ -60,6 +61,7 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
+        // 2. COMANDOS MANUALES (Ahorro de tokens)
         if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
             const keyboard = {
@@ -73,8 +75,9 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        // 3. PROCESAMIENTO DE VOZ (Sintaxis camelCase blindada)
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
+            await telegramSendMessage(token, chatId, "🎙️ Analizando audio con protocolo estable...");
             
             const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
             const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`);
@@ -82,8 +85,8 @@ module.exports = async function handler(req, res) {
 
             const prompt = `Analiza el audio y responde SOLO JSON crudo: 
             {"Intent": "CREATE", "Name": "título", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
-            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
-            Hoy: 2026-04-09.`;
+            Categorías: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
+            Hoy es: 2026-04-09.`;
 
             const responseText = await callGeminiDirect(audioData, prompt);
             const cleanJson = responseText.replace(/```json|```/g, "").trim();
@@ -98,7 +101,7 @@ module.exports = async function handler(req, res) {
 
     } catch (err) {
         console.error(err);
-        await telegramSendMessage(token, chatId, `⚠️ Error técnico: ${err.message}`);
+        await telegramSendMessage(token, chatId, `⚠️ Error en protocolo: ${err.message}`);
     }
 
     return res.status(200).send("OK");
