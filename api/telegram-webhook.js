@@ -31,7 +31,24 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
-        // 2. COMANDOS MANUALES
+        // 2. COMANDOS MANUALES Y CREACIÓN RÁPIDA
+        if (text === "/start") {
+            await telegramSendMessage(token, chatId, "🚀 Aura AI Online. Usa /lista o envía un audio.");
+            return res.status(200).send("OK");
+        }
+
+        if (text === "/help") {
+            await telegramSendMessage(token, chatId, "📖 **Manual de Aura AI**\n\n- `/lista`: Ver tareas con botones.\n- `+ [tarea]`: Creación rápida en Personales.\n- 🎙️ Envía audios para crear tareas complejas.");
+            return res.status(200).send("OK");
+        }
+
+        if (text.startsWith('+')) {
+            const taskName = text.substring(1).trim();
+            await createNotionTaskPage({ Name: taskName, Area: "Personales" });
+            await telegramSendMessage(token, chatId, `✅ Tarea rápida creada: ${taskName}`);
+            return res.status(200).send("OK");
+        }
+
         if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
             const keyboard = {
@@ -45,9 +62,9 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        // 3. PROCESAMIENTO DE VOZ (Modelo Corregido)
+        // 3. PROCESAMIENTO DE VOZ 
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "🎙️ Procesando audio...");
+            await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
             
             const getFileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`);
             const getFileJson = await getFileRes.json();
@@ -56,7 +73,6 @@ module.exports = async function handler(req, res) {
             const arrayBuffer = await audioRes.arrayBuffer();
             const audioData = Buffer.from(arrayBuffer).toString("base64");
 
-            // Solución principal: Uso del modelo 2.5 flash
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
             const model = genAI.getGenerativeModel({ 
                 model: "gemini-2.5-flash",
