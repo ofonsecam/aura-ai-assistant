@@ -17,7 +17,6 @@ module.exports = async function handler(req, res) {
     const message = req.body?.message;
     const cb = req.body?.callback_query;
 
-    // 1. GESTIÓN DE BOTONES (Costo 0 IA - Conservamos avance Fase 6)
     if (cb) {
         const [action, pageId] = cb.data.split(':');
         let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
@@ -31,7 +30,6 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
-        // 2. BYPASS DE IA (Ahorro de tokens - Conservamos avance Fase 4)
         if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
             const keyboard = {
@@ -45,22 +43,20 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        // 3. PROCESAMIENTO DE VOZ (Blindado)
         if (message.voice) {
             await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
-            
             const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
             const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`);
             const audioData = Buffer.from(await audioRes.arrayBuffer()).toString("base64");
 
-            // Configuración estable de Gemini
+            // --- CONFIGURACIÓN CORREGIDA ---
+            // Forzamos el uso del modelo estable sin prefijos extraños
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Usamos el nombre estable
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
 
-            const prompt = `Analiza el audio y responde SOLO JSON: 
+            const prompt = `Analiza el audio y responde SOLO JSON crudo: 
             {"Intent": "CREATE", "Name": "título", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
-            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
-            Hoy: 2026-04-09.`;
+            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.`;
 
             const result = await model.generateContent([
                 { inlineData: { data: audioData, mimeType: "audio/ogg" } },
@@ -76,11 +72,10 @@ module.exports = async function handler(req, res) {
             }
             return res.status(200).send("OK");
         }
-
     } catch (err) {
         console.error(err);
-        await telegramSendMessage(token, chatId, `⚠️ Nota: El audio falló, pero puedes usar comandos manuales. (Error: ${err.message.substring(0, 50)})`);
+        // Respuesta más limpia para el usuario
+        await telegramSendMessage(token, chatId, `⚠️ No pude procesar el audio. Intenta de nuevo o usa texto.`);
     }
-
     return res.status(200).send("OK");
 };
