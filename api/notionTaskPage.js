@@ -1,5 +1,24 @@
 const databaseId = process.env.NOTION_DATABASE_ID;
+const notionInboxId = process.env.NOTION_INBOX_ID;
+const habitsDatabaseId = process.env.NOTION_HABITS_ID;
 const notionToken = process.env.NOTION_TOKEN;
+
+const NOTION_HEADERS = {
+    Authorization: `Bearer ${notionToken}`,
+    'Notion-Version': '2022-06-28',
+    'Content-Type': 'application/json'
+};
+
+/** Notion limita cada fragmento de rich_text a 2000 caracteres. */
+function toRichTextSegments(text) {
+    const s = text == null ? '' : String(text);
+    const max = 2000;
+    const segments = [];
+    for (let i = 0; i < s.length; i += max) {
+        segments.push({ text: { content: s.slice(i, i + max) } });
+    }
+    return segments.length ? segments : [{ text: { content: '' } }];
+}
 
 function getLevenshteinDistance(a, b) {
     if (a === b) return 0;
@@ -30,7 +49,7 @@ function resolveNaturalDate(input) {
 async function findBestFuzzyMatch(searchName) {
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({ 
             filter: { 
                 or: [
@@ -68,10 +87,10 @@ async function createNotionTaskPage(taskData) {
         'Estado': { select: { name: 'Pendiente' } },
         'Area': { select: { name: area } }
     };
-    if (fecha) properties['Fecha'] = { date: { start: fecha } };
+    if (fecha) properties['Date'] = { date: { start: fecha } };
     const res = await fetch(`https://api.notion.com/v1/pages`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({ parent: { database_id: databaseId }, properties })
     });
     return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
@@ -90,7 +109,7 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 
     const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({ properties: { 'Estado': { select: { name: newStatus } } } })
     });
     return res.ok ? `✅ Tarea actualizada a ${newStatus}` : `❌ Error al actualizar.`;
@@ -99,7 +118,7 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 async function readNotionTasks(filterArea, filterDate) {
     const filters = [];
     if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
-    if (filterDate) filters.push({ property: 'Fecha', date: { equals: filterDate } });
+    if (filterDate) filters.push({ property: 'Date', date: { equals: filterDate } });
     
     // Filtro por defecto: Todo lo que NO esté hecho
     if (filters.length === 0) {
@@ -114,7 +133,7 @@ async function readNotionTasks(filterArea, filterDate) {
 
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({ filter: filters.length === 1 ? filters[0] : { and: filters } })
     });
     const data = await res.json();
@@ -140,7 +159,7 @@ async function deleteNotionTask(searchNameOrId, isId = false) {
     }
     const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({ archived: true })
     });
     return res.ok ? `🗑️ Tarea eliminada correctamente.` : `❌ Error al eliminar.`;
@@ -151,12 +170,12 @@ async function getOverdueTasks() {
     const todayStr = now.toISOString().slice(0, 10);
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+        headers: NOTION_HEADERS,
         body: JSON.stringify({
             filter: {
                 and: [
                     { or: [{ property: 'Estado', select: { equals: 'Pendiente' } }, { property: 'Estado', select: { equals: 'Haciendo' } }] },
-                    { property: 'Fecha', date: { before: todayStr } }
+                    { property: 'Date', date: { before: todayStr } }
                 ]
             }
         })
@@ -165,4 +184,67 @@ async function getOverdueTasks() {
     return data.results || [];
 }
 
-module.exports = { createNotionTaskPage, updateNotionTaskStatus, readNotionTasks, deleteNotionTask, getOverdueTasks };
+/**
+ * Crea una fila en la base de Notas (inbox): Name = título, Text = cuerpo.
+ * @param {string} title
+ * @param {string} content
+ */
+async function createNotionNotePage(title, content) {
+    if (!notionInboxId) return '❌ Falta NOTION_INBOX_ID en el entorno.';
+    const name = (title || '').trim();
+    const properties = {
+        Name: { title: [{ text: { content: name } }] },
+        Text: { rich_text: toRichTextSegments(content) }
+    };
+    const res = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ parent: { database_id: notionInboxId }, properties })
+    });
+    return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
+}
+
+const HABIT_PAGE_TITLE_PROPERTY = 'Name';
+
+/**
+ * Marca un checkbox de hábito en la fila del día actual (título = YYYY-MM-DD, zona Bogotá).
+ * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
+ */
+async function markHabitAsDone(habitName) {
+    if (!habitsDatabaseId) return '❌ Falta NOTION_HABITS_ID en el entorno.';
+    const key = (habitName || '').trim();
+    if (!key) return '❌ Indica el nombre del hábito.';
+
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+    const todayStr = now.toISOString().slice(0, 10);
+
+    const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDatabaseId}/query`, {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({
+            filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: todayStr } }
+        })
+    });
+    const queryData = await queryRes.json();
+    const page = queryData.results?.[0];
+    if (!page) return `❌ No hay página de hábitos con título "${todayStr}".`;
+
+    const patchRes = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
+        method: 'PATCH',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ properties: { [key]: { checkbox: true } } })
+    });
+    return patchRes.ok
+        ? `✅ Hábito "${key}" marcado para ${todayStr}.`
+        : `❌ No pude actualizar el hábito (¿existe la propiedad "${key}"?).`;
+}
+
+module.exports = {
+    createNotionTaskPage,
+    createNotionNotePage,
+    markHabitAsDone,
+    updateNotionTaskStatus,
+    readNotionTasks,
+    deleteNotionTask,
+    getOverdueTasks
+};
