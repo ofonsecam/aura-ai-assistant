@@ -15,63 +15,79 @@ module.exports = async function handler(req, res) {
     if (req.method !== "POST") return res.status(200).send("OK");
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const message = req.body?.message;
-    if (!message) return res.status(200).send("OK");
-    const chatId = message.chat.id;
+    const cb = req.body?.callback_query;
 
-    // Manejar Callbacks (botones) rápido
-    if (req.body.callback_query) {
-        const cb = req.body.callback_query;
+    // 1. GESTIÓN DE BOTONES (Costo 0 IA)
+    if (cb) {
         const [action, pageId] = cb.data.split(':');
-        const reply = await (action === "done" ? updateNotionTaskStatus(pageId, "Hecho", true) : updateNotionTaskStatus(pageId, "Haciendo", true));
-        await telegramSendMessage(token, chatId, reply);
+        let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
+        let reply = "";
+        
+        if (action === "del") {
+            reply = await deleteNotionTask(pageId, true);
+        } else {
+            reply = await updateNotionTaskStatus(pageId, status, true);
+        }
+        
+        await telegramSendMessage(token, cb.message.chat.id, reply);
         return res.status(200).send("OK");
     }
 
-    try {
-        const text = (message.text || "").trim();
+    if (!message) return res.status(200).send("OK");
+    const chatId = message.chat.id;
+    const text = (message.text || "").trim();
 
-        // Comandos rápidos
-        if (text === "/lista" || text === "ver") {
+    try {
+        // 2. COMANDOS MANUALES (Bypass de IA para ahorrar tokens)
+        if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
-            const keyboard = { inline_keyboard: tasks.slice(0, 8).map((t, i) => [{ text: `✅ ${i + 1}`, callback_data: `done:${t.id}` }, { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` }]) };
+            const keyboard = {
+                inline_keyboard: tasks.slice(0, 10).map((t, i) => [
+                    { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
+                    { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` },
+                    { text: `🗑️ ${i + 1}`, callback_data: `del:${t.id}` }
+                ])
+            };
             await telegramSendMessage(token, chatId, listText, keyboard);
             return res.status(200).send("OK");
         }
 
-        // --- PROCESAMIENTO DE AUDIO ---
+        if (text.startsWith('+')) {
+            await createNotionTaskPage({ Name: text.replace('+', '').trim(), Area: "Personales" });
+            await telegramSendMessage(token, chatId, "✅ Tarea rápida creada.");
+            return res.status(200).send("OK");
+        }
+
+        // 3. PROCESAMIENTO DE VOZ CON GEMINI
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "⏳ Descargando y analizando audio...");
+            await telegramSendMessage(token, chatId, "⏳ Analizando audio con IA...");
             
-            // 1. Obtener archivo de Telegram
             const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
-            const audioBuffer = await (await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`)).arrayBuffer();
-            const base64Audio = Buffer.from(audioBuffer).toString("base64");
+            const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`);
+            const audioData = Buffer.from(await audioRes.arrayBuffer()).toString("base64");
 
-            // 2. Llamar a Gemini
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Modelo estable y veloz
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Modelo optimizado
 
-            const prompt = `Analiza este audio y responde ÚNICAMENTE con un JSON crudo:
-            {"Intent": "CREATE", "Name": "nombre de la tarea", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
-            Categorías: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
-            Hoy es: 2026-04-09.`;
+            const prompt = `Extrae la tarea del audio. Responde SOLO JSON: 
+            {"Intent": "CREATE", "Name": "título", "Area": "categoría", "Fecha": "YYYY-MM-DD"}.
+            Áreas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.
+            Hoy: 2026-04-09.`;
 
-            const result = await model.generateContent([prompt, { inlineData: { data: base64Audio, mimeType: "audio/ogg" } }]);
-            const cleanJson = result.response.text().replace(/```json|```/g, "").trim();
-            const taskData = JSON.parse(cleanJson);
+            const result = await model.generateContent([prompt, { inlineData: { data: audioData, mimeType: "audio/ogg" } }]);
+            const responseText = result.response.text().replace(/```json|```/g, "").trim();
+            const taskData = JSON.parse(responseText);
 
-            // 3. Crear en Notion
             if (taskData.Intent === "CREATE") {
                 await createNotionTaskPage(taskData);
-                await telegramSendMessage(token, chatId, `✅ **Tarea creada:** ${taskData.Name}\n📍 **Área:** ${taskData.Area}`);
-            } else {
-                await telegramSendMessage(token, chatId, "🤔 No entendí la intención de crear una tarea.");
+                await telegramSendMessage(token, chatId, `🎙️ **Tarea de voz creada:** ${taskData.Name}`);
             }
+            return res.status(200).send("OK");
         }
 
     } catch (err) {
         console.error(err);
-        await telegramSendMessage(token, chatId, `⚠️ **Error en proceso:** ${err.message.substring(0, 100)}...`);
+        await telegramSendMessage(token, chatId, `⚠️ Error: ${err.message.split('\n')[0]}`);
     }
 
     return res.status(200).send("OK");
