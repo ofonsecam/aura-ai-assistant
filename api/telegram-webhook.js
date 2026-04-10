@@ -17,7 +17,6 @@ module.exports = async function handler(req, res) {
     const message = req.body?.message;
     const cb = req.body?.callback_query;
 
-    // 1. GESTIÓN DE BOTONES
     if (cb) {
         const [action, pageId] = cb.data.split(':');
         let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
@@ -31,7 +30,6 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
-        // 2. COMANDOS MANUALES Y CREACIÓN RÁPIDA
         if (text === "/start") {
             await telegramSendMessage(token, chatId, "🚀 Aura AI Online. Usa /lista o envía un audio.");
             return res.status(200).send("OK");
@@ -62,9 +60,8 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        // 3. PROCESAMIENTO DE VOZ 
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
+            await telegramSendMessage(token, chatId, "🎙️ Procesando audio...");
             
             const getFileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`);
             const getFileJson = await getFileRes.json();
@@ -74,19 +71,25 @@ module.exports = async function handler(req, res) {
             const audioData = Buffer.from(arrayBuffer).toString("base64");
 
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ 
-                model: "gemini-2.5-flash",
-                generationConfig: { responseMimeType: "application/json" }
-            });
-
             const prompt = `Extrae la información del audio. 
             Formato requerido: {"Intent": "CREATE", "Name": "nombre de la tarea", "Area": "categoría", "Fecha": "YYYY-MM-DD"}. 
             Categorías permitidas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.`;
 
-            const result = await model.generateContent([
-                { inlineData: { data: audioData, mimeType: "audio/ogg" } },
-                prompt
-            ]);
+            let result;
+            try {
+                // Intento 1: Modelo Principal
+                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
+                result = await model.generateContent([{ inlineData: { data: audioData, mimeType: "audio/ogg" } }, prompt]);
+            } catch (apiErr) {
+                if (apiErr.message.includes("503")) {
+                    // Intento 2: Plan de Respaldo si Google está saturado
+                    await telegramSendMessage(token, chatId, "⏳ Google Gemini está muy ocupado (Error 503). Intentando con modelo de respaldo...");
+                    const fallbackModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash", generationConfig: { responseMimeType: "application/json" } });
+                    result = await fallbackModel.generateContent([{ inlineData: { data: audioData, mimeType: "audio/ogg" } }, prompt]);
+                } else {
+                    throw apiErr; // Si es otro error, lo mostramos
+                }
+            }
 
             const taskData = JSON.parse(result.response.text());
 
@@ -99,7 +102,12 @@ module.exports = async function handler(req, res) {
 
     } catch (err) {
         console.error(err);
-        await telegramSendMessage(token, chatId, `⚠️ Error técnico: ${err.message}`);
+        // Mensajes de error más amigables
+        if (err.message.includes("503")) {
+            await telegramSendMessage(token, chatId, `⚠️ Google sigue colapsado en este momento. Por favor usa el comando '+' temporalmente.`);
+        } else {
+            await telegramSendMessage(token, chatId, `⚠️ Error técnico: ${err.message}`);
+        }
     }
 
     return res.status(200).send("OK");
