@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
     const message = req.body?.message;
     const cb = req.body?.callback_query;
 
-    // 1. GESTIÓN DE BOTONES (Estable)
+    // 1. GESTIÓN DE BOTONES
     if (cb) {
         const [action, pageId] = cb.data.split(':');
         let status = action === "done" ? "Hecho" : (action === "doing" ? "Haciendo" : "Pausado");
@@ -31,7 +31,7 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
-        // 2. COMANDOS MANUALES (Estable)
+        // 2. COMANDOS MANUALES
         if (text === "/lista" || text.toLowerCase() === "ver") {
             const { text: listText, tasks } = await readNotionTasks("", "");
             const keyboard = {
@@ -45,41 +45,45 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        // 3. PROCESAMIENTO DE VOZ (La Solución Definitiva)
+        // 3. PROCESAMIENTO DE VOZ (Modelo Corregido)
         if (message.voice) {
-            await telegramSendMessage(token, chatId, "🎙️ Analizando audio...");
+            await telegramSendMessage(token, chatId, "🎙️ Procesando audio...");
             
-            const getFile = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`)).json();
-            const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFile.result.file_path}`);
-            const audioData = Buffer.from(await audioRes.arrayBuffer()).toString("base64");
+            const getFileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${message.voice.file_id}`);
+            const getFileJson = await getFileRes.json();
+            const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${getFileJson.result.file_path}`);
+            
+            const arrayBuffer = await audioRes.arrayBuffer();
+            const audioData = Buffer.from(arrayBuffer).toString("base64");
 
-            // Usamos la SDK oficial pero con el modelo "latest" que no falla por región
+            // Solución principal: Uso del modelo 2.5 flash
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+            const model = genAI.getGenerativeModel({ 
+                model: "gemini-2.5-flash",
+                generationConfig: { responseMimeType: "application/json" }
+            });
 
-            const prompt = `Responde EXCLUSIVAMENTE con un JSON crudo, sin formato markdown:
-            {"Intent": "CREATE", "Name": "nombre de la tarea", "Area": "categoría", "Fecha": "2026-04-09"}.
-            Categorías: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.`;
+            const prompt = `Extrae la información del audio. 
+            Formato requerido: {"Intent": "CREATE", "Name": "nombre de la tarea", "Area": "categoría", "Fecha": "YYYY-MM-DD"}. 
+            Categorías permitidas: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales.`;
 
-            // Llamada limpia y directa
             const result = await model.generateContent([
                 { inlineData: { data: audioData, mimeType: "audio/ogg" } },
                 prompt
             ]);
 
-            const responseText = result.response.text().replace(/```json|```/g, "").trim();
-            const taskData = JSON.parse(responseText);
+            const taskData = JSON.parse(result.response.text());
 
             if (taskData.Intent === "CREATE") {
                 await createNotionTaskPage(taskData);
-                await telegramSendMessage(token, chatId, `✅ **Tarea creada por voz:** ${taskData.Name}`);
+                await telegramSendMessage(token, chatId, `✅ Tarea creada: ${taskData.Name}`);
             }
             return res.status(200).send("OK");
         }
 
     } catch (err) {
         console.error(err);
-        await telegramSendMessage(token, chatId, `⚠️ Error en IA: ${err.message}`);
+        await telegramSendMessage(token, chatId, `⚠️ Error técnico: ${err.message}`);
     }
 
     return res.status(200).send("OK");
