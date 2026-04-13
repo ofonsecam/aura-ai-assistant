@@ -230,13 +230,12 @@ module.exports = async function handler(req, res) {
                 token,
                 chatId,
                 "📖 **Manual de Aura AI**\n\n" +
-                    "- `Área/ Tarea` → Crear tarea (ej. *Iglesia/ Leer*).\n" +
-                    "- `Área/ ver` → Ver pendientes de esa área.\n" +
-                    "- `Nota/ Texto` → Guardar nota rápida.\n" +
-                    "- `Habito/ Nombre` → Marcar hábito de hoy.\n" +
-                    "- `/lista` → Ver todos los pendientes.\n\n" +
-                    "- `+` tarea rápida (*Personales* o `+ Área: tarea`).\n" +
-                    "- **Texto libre**: Gemini clasifica tarea, nota, hábito o consulta."
+                    "Área/ Tarea → Crear tarea (ej. Iglesia/ Leer).\n\n" +
+                    "Área/ ver → Ver pendientes de esa área.\n\n" +
+                    "Nota/ Texto → Guardar nota rápida.\n\n" +
+                    "Habito/ Nombre → Marcar hábito de hoy.\n\n" +
+                    "$ [Monto] [Concepto] → Registrar gasto en Inbox (ej. $ 15000 Almuerzo).\n\n" +
+                    "/lista → Ver todos los pendientes."
             );
             return res.status(200).send("OK");
         }
