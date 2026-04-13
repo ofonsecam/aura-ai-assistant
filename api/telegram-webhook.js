@@ -51,8 +51,8 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
     });
 }
 
-async function sendPendingTaskList(token, chatId) {
-    const { text: listText, tasks } = await readNotionTasks("", "");
+async function sendPendingTaskList(token, chatId, filterArea = "") {
+    const { text: listText, tasks } = await readNotionTasks(filterArea || "", "");
     const keyboard = {
         inline_keyboard: tasks.slice(0, 10).map((t, i) => [
             { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
@@ -61,6 +61,85 @@ async function sendPendingTaskList(token, chatId) {
         ]),
     };
     await telegramSendMessage(token, chatId, listText, keyboard);
+}
+
+/**
+ * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
+ * @returns {null | { prefix: string, prefixNorm: string, content: string }}
+ */
+function parseInlineSlashPrefix(text) {
+    if (!text || text.startsWith("/") || !text.includes("/")) return null;
+    if (/^https?:\/\//i.test(text)) return null;
+    const idx = text.indexOf("/");
+    const prefix = text.slice(0, idx).trim();
+    const content = text.slice(idx + 1).trim();
+    if (!prefix) return null;
+    return { prefix, prefixNorm: prefix.toLowerCase(), content };
+}
+
+function noteTitleFromNotaBody(body) {
+    const line = body.split("\n")[0].trim();
+    if (!line) return "Nota";
+    return line.length <= 120 ? line : `${line.slice(0, 117)}...`;
+}
+
+/**
+ * @returns {Promise<boolean>} true si el mensaje se procesó (no pasar a Gemini).
+ */
+async function handleInlineSlashPrefix(token, chatId, text) {
+    const parsed = parseInlineSlashPrefix(text);
+    if (!parsed) return false;
+
+    const { prefix, prefixNorm, content } = parsed;
+
+    if (prefixNorm === "nota") {
+        if (!content) {
+            await telegramSendMessage(token, chatId, "⚠️ Escribe el texto de la nota después de `nota/`.");
+            return true;
+        }
+        const title = noteTitleFromNotaBody(content);
+        const result = await createNotionNotePage(title, content);
+        if (typeof result === "string" && result.startsWith("❌")) {
+            await telegramSendMessage(token, chatId, result);
+        } else {
+            await telegramSendMessage(token, chatId, `📝 Nota guardada: *${title}*`);
+        }
+        return true;
+    }
+
+    if (prefixNorm === "habito") {
+        if (!content) {
+            await telegramSendMessage(token, chatId, "⚠️ Indica el hábito (ej. `habito/ Oración`).");
+            return true;
+        }
+        let habitName = content.trim();
+        if (!HABIT_WHITELIST.has(habitName)) {
+            const lower = habitName.toLowerCase();
+            const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
+            habitName = match || habitName;
+        }
+        const habitResult = await markHabitAsDone(habitName);
+        await telegramSendMessage(token, chatId, habitResult);
+        return true;
+    }
+
+    if (content.toLowerCase() === "ver") {
+        await sendPendingTaskList(token, chatId, prefix);
+        return true;
+    }
+
+    if (!content) {
+        await telegramSendMessage(
+            token,
+            chatId,
+            "⚠️ Escribe la tarea después de `/` (ej. `Iglesia/ Leer`)."
+        );
+        return true;
+    }
+
+    await createNotionTaskPage({ Name: content, Area: prefix });
+    await telegramSendMessage(token, chatId, `✅ Tarea creada: *${content}* (${prefix})`);
+    return true;
 }
 
 async function routeIntentWithGemini(userText) {
@@ -117,7 +196,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "🚀 Aura AI Online. Escribe lo que necesites (tarea, nota, hábito o consulta) o usa /lista y /help."
+                "🚀 Aura AI Online. Usa `Área/ tarea`, `nota/`, `habito/` o /lista. /help para el manual."
             );
             return res.status(200).send("OK");
         }
@@ -127,11 +206,18 @@ module.exports = async function handler(req, res) {
                 token,
                 chatId,
                 "📖 **Manual de Aura AI**\n\n" +
-                    "- `+ [área]: [tarea]` — Crear tarea sin IA en un área específica.\n" +
-                    "- `+ [tarea]` — Tarea rápida en *Personales*.\n" +
-                    "- `ver` o `/lista` — Reporte con categorías (y botones en `/lista`).\n\n" +
-                    "- **Texto libre**: el asistente decide si es tarea, nota, hábito o consulta."
+                    "- `Área/ Tarea` → Crear tarea (ej. *Iglesia/ Leer*).\n" +
+                    "- `Área/ ver` → Ver pendientes de esa área.\n" +
+                    "- `Nota/ Texto` → Guardar nota rápida.\n" +
+                    "- `Habito/ Nombre` → Marcar hábito de hoy.\n" +
+                    "- `/lista` → Ver todos los pendientes.\n\n" +
+                    "- `+` tarea rápida (*Personales* o `+ Área: tarea`).\n" +
+                    "- **Texto libre**: Gemini clasifica tarea, nota, hábito o consulta."
             );
+            return res.status(200).send("OK");
+        }
+
+        if (await handleInlineSlashPrefix(token, chatId, text)) {
             return res.status(200).send("OK");
         }
 
@@ -245,7 +331,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "⚠️ Gemini no está disponible (503). Prueba en un momento o usa `+` para una tarea rápida."
+                "⚠️ Gemini no está disponible (503). Prueba en un momento o usa `Área/ tarea` o `+` para tarea rápida."
             );
         } else {
             await telegramSendMessage(token, chatId, `⚠️ Error: ${err.message}`);

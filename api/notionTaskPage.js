@@ -46,6 +46,12 @@ function resolveNaturalDate(input) {
     return input;
 }
 
+/** Fecha local YYYY-MM-DD en zona America/Bogota. */
+function getTodayBogotaYmd() {
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    return now.toISOString().slice(0, 10);
+}
+
 async function findBestFuzzyMatch(searchName) {
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
@@ -77,7 +83,9 @@ async function findBestFuzzyMatch(searchName) {
 async function createNotionTaskPage(taskData) {
     let name = (taskData.Name || '').trim();
     let area = taskData.Area || 'Personales';
-    let fecha = resolveNaturalDate(taskData.Fecha);
+    const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
+    let fecha = resolveNaturalDate(fechaRaw);
+    if (!fecha) fecha = getTodayBogotaYmd();
     if (/\b(URGENTE|YA|IMPORTANTE)\b/i.test(name)) {
         if (!name.startsWith('🚨')) name = '🚨 ' + name;
         if (area === 'Personales') area = 'IA Dev';
@@ -85,9 +93,9 @@ async function createNotionTaskPage(taskData) {
     const properties = {
         'Name': { title: [{ text: { content: name } }] },
         'Estado': { select: { name: 'Pendiente' } },
-        'Area': { select: { name: area } }
+        'Area': { select: { name: area } },
+        'Date': { date: { start: fecha } }
     };
-    if (fecha) properties['Date'] = { date: { start: fecha } };
     const res = await fetch(`https://api.notion.com/v1/pages`, {
         method: 'POST',
         headers: NOTION_HEADERS,
@@ -116,25 +124,23 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 }
 
 async function readNotionTasks(filterArea, filterDate) {
-    const filters = [];
+    const statusFilter = {
+        or: [
+            { property: 'Estado', select: { equals: 'Pendiente' } },
+            { property: 'Estado', select: { equals: 'Haciendo' } },
+            { property: 'Estado', select: { equals: 'Pausado' } }
+        ]
+    };
+    const filters = [statusFilter];
     if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
     if (filterDate) filters.push({ property: 'Date', date: { equals: filterDate } });
-    
-    // Filtro por defecto: Todo lo que NO esté hecho
-    if (filters.length === 0) {
-        filters.push({
-            or: [
-                { property: 'Estado', select: { equals: 'Pendiente' } },
-                { property: 'Estado', select: { equals: 'Haciendo' } },
-                { property: 'Estado', select: { equals: 'Pausado' } }
-            ]
-        });
-    }
+
+    const filter = filters.length === 1 ? filters[0] : { and: filters };
 
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: NOTION_HEADERS,
-        body: JSON.stringify({ filter: filters.length === 1 ? filters[0] : { and: filters } })
+        body: JSON.stringify({ filter })
     });
     const data = await res.json();
     
@@ -149,7 +155,7 @@ async function readNotionTasks(filterArea, filterDate) {
 
     const text =
         '📋 Tus tareas:\n' +
-        tasks.map((t, i) => `${i + 1}. [${t.area}] ${t.name} (${t.status})`).join('\n');
+        tasks.map((t, i) => `${i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`).join('\n');
     return { text, tasks };
 }
 
