@@ -127,8 +127,9 @@ module.exports = async function handler(req, res) {
                 token,
                 chatId,
                 "📖 **Manual de Aura AI**\n\n" +
-                    "- `/lista`: Ver pendientes con botones.\n" +
-                    "- `+ tarea`: Creación rápida (Personales).\n" +
+                    "- `+ [área]: [tarea]` — Crear tarea sin IA en un área específica.\n" +
+                    "- `+ [tarea]` — Tarea rápida en *Personales*.\n" +
+                    "- `ver` o `/lista` — Reporte con categorías (y botones en `/lista`).\n\n" +
                     "- **Texto libre**: el asistente decide si es tarea, nota, hábito o consulta."
             );
             return res.status(200).send("OK");
@@ -149,13 +150,35 @@ module.exports = async function handler(req, res) {
         }
 
         if (text.startsWith("+")) {
-            const taskName = text.substring(1).trim();
-            if (!taskName) {
+            const rest = text.substring(1).trim();
+            if (!rest) {
                 await telegramSendMessage(token, chatId, "⚠️ Escribe algo después del +.");
                 return res.status(200).send("OK");
             }
-            await createNotionTaskPage({ Name: taskName, Area: "Personales" });
-            await telegramSendMessage(token, chatId, `✅ Tarea rápida creada: ${taskName}`);
+            const colonIdx = rest.indexOf(":");
+            let area;
+            let taskName;
+            if (colonIdx !== -1) {
+                area = rest.slice(0, colonIdx).trim() || "Personales";
+                taskName = rest.slice(colonIdx + 1).trim();
+            } else {
+                area = "Personales";
+                taskName = rest;
+            }
+            if (!taskName) {
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    "⚠️ Indica el nombre de la tarea después de `:` (ej. `+ Trabajo: revisar correo`)."
+                );
+                return res.status(200).send("OK");
+            }
+            await createNotionTaskPage({ Name: taskName, Area: area });
+            await telegramSendMessage(
+                token,
+                chatId,
+                `✅ Tarea creada: *${taskName}* (${area})`
+            );
             return res.status(200).send("OK");
         }
 

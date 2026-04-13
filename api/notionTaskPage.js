@@ -140,13 +140,16 @@ async function readNotionTasks(filterArea, filterDate) {
     
     if (!data.results?.length) return { text: '🔍 Sin pendientes.', tasks: [] };
 
-    const tasks = data.results.map((p, i) => ({
+    const tasks = data.results.map((p) => ({
         id: p.id,
         name: p.properties['Name']?.title[0]?.text?.content || 'Sin título',
-        status: p.properties['Estado']?.select?.name || '---'
+        status: p.properties['Estado']?.select?.name || '---',
+        area: p.properties['Area']?.select?.name || '---'
     }));
 
-    const text = '📋 Tus tareas:\n' + tasks.map((t, i) => `${i + 1}. ${t.name} (${t.status})`).join('\n');
+    const text =
+        '📋 Tus tareas:\n' +
+        tasks.map((t, i) => `${i + 1}. [${t.area}] ${t.name} (${t.status})`).join('\n');
     return { text, tasks };
 }
 
