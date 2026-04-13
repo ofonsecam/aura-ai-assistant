@@ -37,6 +37,39 @@ Reglas de clasificación:
 
 Usa la fecha/hora de "Contexto temporal" para interpretar "hoy", "mañana", "pasado mañana" y calcular Fecha en YYYY-MM-DD cuando corresponda a TASK.`;
 
+/** Cuerpo /help (HTML mínimo: solo el título en <b> para evitar Entity_parse_failed). */
+const helpMessage = `
+<b>📖 Manual de Aura AI v2.5</b>
+
+🛠 Gestión de Tareas
+
+Área/ Tarea → Crea tarea
+
+Área/ ver → Filtra pendientes
+
+/lista → Ver todos los pendientes
+
+⛪ Segunda Consejería
+
+m/ [Título] → Crea minuta
+
+act/ [Nombre] → Nueva actividad
+
+📝 Notas y Hábitos
+
+Nota/ [Texto] → Envía a Inbox
+
+Habito/ [Nombre] → Marca hábito hoy
+
+💰 Finanzas
+
+$ [Monto] [Concepto] → Registro gasto
+
+🔘 Botones de Acción
+✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar
+
+Nota: Para Iglesia, usa el prefijo Iglesia/.`;
+
 function parseGeminiJson(raw) {
     const cleaned = String(raw)
         .trim()
@@ -278,24 +311,7 @@ module.exports = async function handler(req, res) {
         }
 
         if (text === "/help") {
-            const helpHtml =
-                "<b>📖 Manual de Aura AI v2.5</b>\n\n" +
-                "<b>🛠 Gestión de Tareas</b>\n" +
-                "- <code>Área/ Tarea</code> → Crea tarea.\n" +
-                "- <code>Área/ ver</code> → Filtra pendientes.\n" +
-                "- <code>/lista</code> → Ver todos los pendientes.\n\n" +
-                "<b>⛪ Segunda Consejería</b>\n" +
-                "- <code>m/ [Título]</code> → Crea minuta de reunión.\n" +
-                "- <code>act/ [Nombre]</code> → Nueva actividad.\n\n" +
-                "<b>📝 Notas y Hábitos</b>\n" +
-                "- <code>Nota/ [Texto]</code> → Envía a Inbox.\n" +
-                "- <code>Habito/ [Nombre]</code> → Marca hábito de hoy.\n\n" +
-                "<b>💰 Finanzas</b>\n" +
-                "- <code>$ [Monto] [Concepto]</code> → Registro de gasto.\n\n" +
-                "<b>🔘 Botones de Acción</b>\n" +
-                "✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar\n\n" +
-                "<i>Nota: Para tareas de la Iglesia, usa el prefijo Iglesia/.</i>";
-            await telegramSendMessage(token, chatId, helpHtml, null, "HTML");
+            await telegramSendMessage(token, chatId, helpMessage.trim(), null, "HTML");
             return res.status(200).send("OK");
         }
 
