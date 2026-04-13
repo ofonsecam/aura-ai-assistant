@@ -3,6 +3,8 @@ const {
     createNotionTaskPage,
     createNotionNotePage,
     createNotionExpensePage,
+    createNotionMinutePage,
+    createNotionActivityPage,
     parseExpenseAmount,
     markHabitAsDone,
     normalizeNotionArea,
@@ -144,6 +146,42 @@ async function handleInlineSlashPrefix(token, chatId, text) {
         return true;
     }
 
+    if (prefixNorm === "m" || prefixNorm === "minuta") {
+        if (!content) {
+            await telegramSendMessage(
+                token,
+                chatId,
+                "⚠️ Escribe el título de la minuta después de `m/` o `minuta/` (ej. `m/ Reunión Obispado`)."
+            );
+            return true;
+        }
+        const result = await createNotionMinutePage(content);
+        if (typeof result === "string" && result.startsWith("❌")) {
+            await telegramSendMessage(token, chatId, result);
+        } else {
+            await telegramSendMessage(token, chatId, `📋 Minuta registrada: *${content}*`);
+        }
+        return true;
+    }
+
+    if (prefixNorm === "act" || prefixNorm === "actividad") {
+        if (!content) {
+            await telegramSendMessage(
+                token,
+                chatId,
+                "⚠️ Escribe el nombre después de `act/` o `actividad/` (ej. `act/ Noche de talentos`)."
+            );
+            return true;
+        }
+        const result = await createNotionActivityPage(content);
+        if (typeof result === "string" && result.startsWith("❌")) {
+            await telegramSendMessage(token, chatId, result);
+        } else {
+            await telegramSendMessage(token, chatId, `📌 Actividad creada (Planificación): *${content}*`);
+        }
+        return true;
+    }
+
     if (content.toLowerCase() === "ver") {
         await sendPendingTaskList(token, chatId, normalizeNotionArea(prefix));
         return true;
@@ -243,13 +281,22 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "📖 **Manual de Aura AI**\n\n" +
-                    "Área/ Tarea → Crear tarea (ej. Iglesia/ Leer).\n\n" +
-                    "Área/ ver → Ver pendientes de esa área.\n\n" +
-                    "Nota/ Texto → Guardar nota rápida.\n\n" +
-                    "Habito/ Nombre → Marcar hábito de hoy.\n\n" +
-                    "$ [Monto] [Concepto] → Registrar gasto en Inbox (ej. $ 15000 Almuerzo).\n\n" +
-                    "/lista → Ver todos los pendientes."
+                "📖 Manual de Aura AI v2.5\n\n" +
+                    "🛠 Gestión de Tareas\n\n" +
+                    "Área/ Tarea → Crea tarea (Fecha: Hoy).\n" +
+                    "Área/ ver → Filtra pendientes de esa área.\n" +
+                    "/lista → Ver todos los pendientes globales.\n\n" +
+                    "⛪ Segunda Consejería\n\n" +
+                    "m/ [Título] → Crea minuta de reunión.\n" +
+                    "act/ [Nombre] → Nueva actividad/proyecto.\n\n" +
+                    "📝 Notas y Hábitos\n\n" +
+                    "Nota/ [Texto] → Envía a Inbox de notas.\n" +
+                    "Habito/ [Nombre] → Marca hábito de hoy.\n\n" +
+                    "💰 Finanzas\n\n" +
+                    "$ [Monto] [Concepto] → Registro en Inbox Gastos.\n\n" +
+                    "🔘 Botones de Acción\n\n" +
+                    "✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar\n\n" +
+                    "Nota: Para tareas de la Iglesia, usa el prefijo Iglesia/."
             );
             return res.status(200).send("OK");
         }

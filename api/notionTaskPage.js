@@ -2,6 +2,8 @@ const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
+const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
+const notionActividadesProyectosId = (process.env.NOTION_ACTIVIDADES_PROYECTOS_ID || '').trim();
 const notionToken = (process.env.NOTION_TOKEN || '').trim();
 
 const NOTION_UUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
@@ -343,6 +345,86 @@ async function createNotionExpensePage(amount, description) {
     return `❌ Error Notion (${detail}).${hint404}`;
 }
 
+/**
+ * Crea una fila en la base de minutas: Name (título) y Fecha (hoy, America/Bogota).
+ * @param {string} title
+ */
+async function createNotionMinutePage(title) {
+    if (!notionMinutasId) {
+� Falta NOTION_MINUTAS_ID en el entorno (Vercel → Variables).';
+    }
+    if (!NOTION_UUID_RE.test(notionMinutasId)) {
+        return '�� NOTION_MINUTAS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+    }
+    if (!notionToken) {
+        return '�� Falta NOTION_TOKEN en el entorno.';
+    }
+    const name = String(title ?? '').trim() || 'Minuta';
+    const fecha = getTodayBogotaYmd();
+    const properties = {
+        Name: { title: [{ text: { content: name } }] },
+        Fecha: { date: { start: fecha } }
+    };
+    const res = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ parent: { database_id: notionMinutasId }, properties })
+    });
+    if (res.ok) return await res.json();
+    let detail = String(res.status);
+    try {
+        const errBody = await res.json();
+        if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+    } catch (_) {
+        /* ignore */
+    }
+    const hint404 =
+        res.status === 404
+            ? ' Comprueba en Notion que la integración tenga acceso a la base de minutas y que el ID sea el de la base.'
+            : '';
+    return `�� Error Notion (${detail}).${hint404}`;
+}
+
+/**
+ * Crea una fila en Actividades / proyectos: Actividad (título) y Estado Planificación.
+ * @param {string} name
+ */
+async function createNotionActivityPage(name) {
+    if (!notionActividadesProyectosId) {
+        return '�� Falta NOTION_ACTIVIDADES_PROYECTOS_ID en el entorno (Vercel → Variables).';
+    }
+    if (!NOTION_UUID_RE.test(notionActividadesProyectosId)) {
+        return '�� NOTION_ACTIVIDADES_PROYECTOS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+    }
+    if (!notionToken) {
+        return '�� Falta NOTION_TOKEN en el entorno.';
+    }
+    const actividad = String(name ?? '').trim() || 'Actividad';
+    const properties = {
+        Actividad: { title: [{ text: { content: actividad } }] },
+        Estado: { select: { name: 'Planificación' } }
+    };
+    const res = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ parent: { database_id: notionActividadesProyectosId }, properties })
+    });
+    if (res.ok) return await res.json();
+    let detail = String(res.status);
+    try {
+        const errBody = await res.json();
+        if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+    } catch (_) {
+        /* ignore */
+    }
+    const hint404 =
+        res.status === 404
+            ? ' Comprueba en Notion que la integración tenga acceso a la base de actividades y que el ID sea el de la base.'
+            : '';
+�            : '';
+    return `�� Error Notion (${detail}).${hint404}`;
+}
+
 const HABIT_PAGE_TITLE_PROPERTY = 'YYYY-MM-DD';
 
 /**
@@ -383,6 +465,8 @@ module.exports = {
     createNotionTaskPage,
     createNotionNotePage,
     createNotionExpensePage,
+    createNotionMinutePage,
+    createNotionActivityPage,
     parseExpenseAmount,
     markHabitAsDone,
     normalizeNotionArea,
