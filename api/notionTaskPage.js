@@ -124,13 +124,18 @@ async function createNotionTaskPage(taskData) {
     return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
 }
 
+/**
+ * @returns {{ ok: true, text: string, taskName: string } | { ok: false, text: string }}
+ */
 async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
     let pageId = isId ? searchNameOrId : null;
-    let taskName = "Tarea";
+    let taskName = null;
 
     if (!isId) {
         const match = await findBestFuzzyMatch(searchNameOrId);
-        if (!match) return `❌ No encontré similar a "${searchNameOrId}".`;
+        if (!match) {
+            return { ok: false, text: `❌ No encontré similar a "${searchNameOrId}".` };
+        }
         pageId = match.pageId;
         taskName = match.name;
     }
@@ -140,7 +145,18 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
         headers: NOTION_HEADERS,
         body: JSON.stringify({ properties: { 'Estado': { select: { name: newStatus } } } })
     });
-    return res.ok ? `✅ Tarea actualizada a ${newStatus}` : `❌ Error al actualizar.`;
+    if (!res.ok) {
+        return { ok: false, text: '❌ Error al actualizar.' };
+    }
+    const data = await res.json();
+    const nameFromPage =
+        data?.properties?.['Name']?.title?.[0]?.text?.content?.trim() || null;
+    const resolvedName = taskName || nameFromPage || 'Tarea';
+    return {
+        ok: true,
+        text: `✅ Tarea actualizada a ${newStatus}`,
+        taskName: resolvedName
+    };
 }
 
 async function readNotionTasks(filterArea, filterDate) {

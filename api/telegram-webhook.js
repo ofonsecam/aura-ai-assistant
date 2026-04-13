@@ -59,6 +59,7 @@ async function sendPendingTaskList(token, chatId, filterArea = "") {
     const keyboard = {
         inline_keyboard: tasks.slice(0, 10).map((t, i) => [
             { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
+            { text: `🔵 ${i + 1}`, callback_data: `doing_blue:${t.id}` },
             { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` },
             { text: `🗑️ ${i + 1}`, callback_data: `del:${t.id}` },
         ]),
@@ -199,10 +200,23 @@ module.exports = async function handler(req, res) {
 
     if (cb) {
         const [action, pageId] = cb.data.split(":");
-        const status = action === "done" ? "Hecho" : action === "doing" ? "Haciendo" : "Pausado";
-        const reply =
-            action === "del" ? await deleteNotionTask(pageId, true) : await updateNotionTaskStatus(pageId, status, true);
-        await telegramSendMessage(token, cb.message.chat.id, reply);
+        if (action === "del") {
+            const reply = await deleteNotionTask(pageId, true);
+            await telegramSendMessage(token, cb.message.chat.id, reply);
+            return res.status(200).send("OK");
+        }
+        const status =
+            action === "done"
+                ? "Hecho"
+                : action === "doing" || action === "doing_blue"
+                  ? "Haciendo"
+                  : "Pausado";
+        const result = await updateNotionTaskStatus(pageId, status, true);
+        const messageText =
+            action === "doing_blue" && result.ok
+                ? `🔵 Tarea en curso: ${result.taskName}`
+                : result.text;
+        await telegramSendMessage(token, cb.message.chat.id, messageText);
         return res.status(200).send("OK");
     }
 
