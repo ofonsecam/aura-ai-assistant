@@ -3,6 +3,7 @@ const {
     createNotionTaskPage,
     createNotionNotePage,
     markHabitAsDone,
+    normalizeNotionArea,
     readNotionTasks,
     updateNotionTaskStatus,
     deleteNotionTask,
@@ -124,7 +125,7 @@ async function handleInlineSlashPrefix(token, chatId, text) {
     }
 
     if (content.toLowerCase() === "ver") {
-        await sendPendingTaskList(token, chatId, prefix);
+        await sendPendingTaskList(token, chatId, normalizeNotionArea(prefix));
         return true;
     }
 
@@ -138,7 +139,11 @@ async function handleInlineSlashPrefix(token, chatId, text) {
     }
 
     await createNotionTaskPage({ Name: content, Area: prefix });
-    await telegramSendMessage(token, chatId, `✅ Tarea creada: *${content}* (${prefix})`);
+    await telegramSendMessage(
+        token,
+        chatId,
+        `✅ Tarea creada: *${content}* (${normalizeNotionArea(prefix)})`
+    );
     return true;
 }
 
@@ -263,7 +268,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                `✅ Tarea creada: *${taskName}* (${area})`
+                `✅ Tarea creada: *${taskName}* (${normalizeNotionArea(area)})`
             );
             return res.status(200).send("OK");
         }
@@ -287,7 +292,11 @@ module.exports = async function handler(req, res) {
                 Area: data.Area || "Personales",
                 Fecha: data.Fecha || "",
             });
-            await telegramSendMessage(token, chatId, `✅ Tarea creada: *${name}*`);
+            await telegramSendMessage(
+                token,
+                chatId,
+                `✅ Tarea creada: *${name}* (${normalizeNotionArea(data.Area || "Personales")})`
+            );
             return res.status(200).send("OK");
         }
 

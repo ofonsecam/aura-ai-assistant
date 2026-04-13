@@ -1,7 +1,9 @@
-const databaseId = process.env.NOTION_DATABASE_ID;
-const notionInboxId = process.env.NOTION_INBOX_ID;
-const habitsDatabaseId = process.env.NOTION_HABITS_ID;
-const notionToken = process.env.NOTION_TOKEN;
+const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
+const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
+const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
+const notionToken = (process.env.NOTION_TOKEN || '').trim();
+
+const NOTION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const NOTION_HEADERS = {
     Authorization: `Bearer ${notionToken}`,
@@ -52,6 +54,23 @@ function getTodayBogotaYmd() {
     return now.toISOString().slice(0, 10);
 }
 
+/**
+ * Normaliza el nombre de área para alinearlo con opciones de Notion (primera letra de cada palabra en mayúscula).
+ * @param {string} area
+ * @returns {string}
+ */
+function normalizeNotionArea(area) {
+    const s = String(area == null ? '' : area).trim();
+    if (!s) return s;
+    return s
+        .split(/\s+/)
+        .map((w) => {
+            if (!w) return w;
+            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+        })
+        .join(' ');
+}
+
 async function findBestFuzzyMatch(searchName) {
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
@@ -82,7 +101,7 @@ async function findBestFuzzyMatch(searchName) {
 
 async function createNotionTaskPage(taskData) {
     let name = (taskData.Name || '').trim();
-    let area = taskData.Area || 'Personales';
+    let area = normalizeNotionArea(taskData.Area || 'Personales');
     const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
     let fecha = resolveNaturalDate(fechaRaw);
     if (!fecha) fecha = getTodayBogotaYmd();
@@ -124,6 +143,7 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 }
 
 async function readNotionTasks(filterArea, filterDate) {
+    const areaFilter = filterArea ? normalizeNotionArea(String(filterArea)) : '';
     const statusFilter = {
         or: [
             { property: 'Estado', select: { equals: 'Pendiente' } },
@@ -132,7 +152,7 @@ async function readNotionTasks(filterArea, filterDate) {
         ]
     };
     const filters = [statusFilter];
-    if (filterArea) filters.push({ property: 'Area', select: { equals: filterArea } });
+    if (areaFilter) filters.push({ property: 'Area', select: { equals: areaFilter } });
     if (filterDate) filters.push({ property: 'Date', date: { equals: filterDate } });
 
     const filter = filters.length === 1 ? filters[0] : { and: filters };
@@ -195,11 +215,20 @@ async function getOverdueTasks() {
 
 /**
  * Crea una fila en la base de Notas (inbox): Name = título, Text = cuerpo.
+ * Parent: base cuyo ID está en NOTION_INBOX_ID (debe ser UUID y la integración debe tener acceso).
  * @param {string} title
  * @param {string} content
  */
 async function createNotionNotePage(title, content) {
-    if (!notionInboxId) return '❌ Falta NOTION_INBOX_ID en el entorno.';
+    if (!notionInboxId) {
+        return '❌ Falta NOTION_INBOX_ID en el entorno (Vercel → Variables).';
+    }
+    if (!NOTION_UUID_RE.test(notionInboxId)) {
+        return '❌ NOTION_INBOX_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+    }
+    if (!notionToken) {
+        return '❌ Falta NOTION_TOKEN en el entorno.';
+    }
     const name = (title || '').trim();
     const properties = {
         Name: { title: [{ text: { content: name } }] },
@@ -210,13 +239,25 @@ async function createNotionNotePage(title, content) {
         headers: NOTION_HEADERS,
         body: JSON.stringify({ parent: { database_id: notionInboxId }, properties })
     });
-    return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
+    if (res.ok) return await res.json();
+    let detail = String(res.status);
+    try {
+        const errBody = await res.json();
+        if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+    } catch (_) {
+        /* ignore */
+    }
+    const hint404 =
+        res.status === 404
+            ? ' Comprueba en Notion que la integración tenga acceso a esa base y que el ID sea el de la base (no una página suelta).'
+            : '';
+    return `❌ Error Notion (${detail}).${hint404}`;
 }
 
 const HABIT_PAGE_TITLE_PROPERTY = 'Name';
 
 /**
- * Marca un checkbox de hábito en la fila del día actual (título = YYYY-MM-DD, zona Bogotá).
+ * Marca un checkbox de hábito en la fila del día actual (título = "YYYY MM DD", zona Bogotá; coincide con DB_Habitos).
  * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
  */
 async function markHabitAsDone(habitName) {
@@ -225,7 +266,8 @@ async function markHabitAsDone(habitName) {
     if (!key) return '❌ Indica el nombre del hábito.';
 
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
-    const todayStr = now.toISOString().slice(0, 10);
+    const pad = (n) => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()} ${pad(now.getMonth() + 1)} ${pad(now.getDate())}`;
 
     const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDatabaseId}/query`, {
         method: 'POST',
@@ -252,6 +294,7 @@ module.exports = {
     createNotionTaskPage,
     createNotionNotePage,
     markHabitAsDone,
+    normalizeNotionArea,
     updateNotionTaskStatus,
     readNotionTasks,
     deleteNotionTask,
