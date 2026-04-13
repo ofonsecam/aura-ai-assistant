@@ -2,6 +2,8 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const {
     createNotionTaskPage,
     createNotionNotePage,
+    createNotionExpensePage,
+    parseExpenseAmount,
     markHabitAsDone,
     normalizeNotionArea,
     readNotionTasks,
@@ -68,6 +70,23 @@ async function sendPendingTaskList(token, chatId, filterArea = "") {
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
  * @returns {null | { prefix: string, prefixNorm: string, content: string }}
  */
+/**
+ * Mensaje que empieza por `$`: primer número = monto; el resto del texto = concepto.
+ * @returns {null | { amountStr: string, concept: string }}
+ */
+function parseDollarExpenseMessage(text) {
+    if (!text.startsWith("$")) return null;
+    const rest = text.slice(1).trim();
+    if (!rest) return null;
+    const m = rest.match(/-?\d[\d.,]*/);
+    if (!m) return null;
+    const amountStr = m[0];
+    const before = rest.slice(0, m.index).trim();
+    const after = rest.slice(m.index + amountStr.length).trim();
+    const concept = [before, after].filter(Boolean).join(" ").trim() || "Gasto";
+    return { amountStr, concept };
+}
+
 function parseInlineSlashPrefix(text) {
     if (!text || text.startsWith("/") || !text.includes("/")) return null;
     if (/^https?:\/\//i.test(text)) return null;
@@ -270,6 +289,32 @@ module.exports = async function handler(req, res) {
                 chatId,
                 `✅ Tarea creada: *${taskName}* (${normalizeNotionArea(area)})`
             );
+            return res.status(200).send("OK");
+        }
+
+        if (text.startsWith("$")) {
+            const parsed = parseDollarExpenseMessage(text);
+            if (!parsed) {
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    "⚠️ Tras `$` indica un monto (ej. `$15000 almuerzo`)."
+                );
+                return res.status(200).send("OK");
+            }
+            const { amountStr, concept } = parsed;
+            const result = await createNotionExpensePage(amountStr, concept);
+            if (typeof result === "string" && result.startsWith("❌")) {
+                await telegramSendMessage(token, chatId, result);
+            } else {
+                const montoNum = parseExpenseAmount(amountStr);
+                const montoLabel = Number.isFinite(montoNum) ? String(montoNum) : amountStr;
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    `💸 Gasto registrado en Inbox: $${montoLabel} por ${concept}. Recuerda moverlo a tu presupuesto mensual en Notion.`
+                );
+            }
             return res.status(200).send("OK");
         }
 

@@ -1,6 +1,7 @@
 const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
+const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
 const notionToken = (process.env.NOTION_TOKEN || '').trim();
 
 const NOTION_UUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
@@ -254,6 +255,78 @@ async function createNotionNotePage(title, content) {
     return `❌ Error Notion (${detail}).${hint404}`;
 }
 
+/**
+ * Convierte amount a número finito (acepta number o string con separadores locales básicos).
+ * @param {number|string} amount
+ * @returns {number}
+ */
+function parseExpenseAmount(amount) {
+    if (typeof amount === 'number' && Number.isFinite(amount)) return amount;
+    const raw = String(amount ?? '').trim();
+    if (!raw) return NaN;
+    const cleaned = raw.replace(/[\s$€]/gi, '').replace(/[^\d.,\-]/g, '');
+    if (!cleaned || cleaned === '-') return NaN;
+    const neg = cleaned.startsWith('-');
+    let s = cleaned.replace(/^-/, '');
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    let numStr;
+    if (lastComma > lastDot) {
+        numStr = s.replace(/\./g, '').replace(',', '.');
+    } else {
+        numStr = s.replace(/,/g, '');
+    }
+    const n = parseFloat(numStr);
+    if (!Number.isFinite(n)) return NaN;
+    return neg ? -n : n;
+}
+
+/**
+ * Registra un gasto en la base Inbox Gastos (NOTION_EXPENSES_ID).
+ * @param {number|string} amount
+ * @param {string} description
+ */
+async function createNotionExpensePage(amount, description) {
+    if (!notionExpensesId) {
+        return '❌ Falta NOTION_EXPENSES_ID en el entorno (Vercel → Variables).';
+    }
+    if (!NOTION_UUID_RE.test(notionExpensesId)) {
+        return '❌ NOTION_EXPENSES_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+    }
+    if (!notionToken) {
+        return '❌ Falta NOTION_TOKEN en el entorno.';
+    }
+    const monto = parseExpenseAmount(amount);
+    if (!Number.isFinite(monto)) {
+        return '❌ El monto no es un número válido.';
+    }
+    const name = String(description ?? '').trim() || 'Gasto';
+    const fecha = getTodayBogotaYmd();
+    const properties = {
+        Name: { title: [{ text: { content: name } }] },
+        Monto: { number: monto },
+        Fecha: { date: { start: fecha } }
+    };
+    const res = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ parent: { database_id: notionExpensesId }, properties })
+    });
+    if (res.ok) return await res.json();
+    let detail = String(res.status);
+    try {
+        const errBody = await res.json();
+        if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+    } catch (_) {
+        /* ignore */
+    }
+    const hint404 =
+        res.status === 404
+            ? ' Comprueba en Notion que la integración tenga acceso a Inbox Gastos y que el ID sea el de la base.'
+            : '';
+    return `❌ Error Notion (${detail}).${hint404}`;
+}
+
 const HABIT_PAGE_TITLE_PROPERTY = 'YYYY-MM-DD';
 
 /**
@@ -293,6 +366,8 @@ async function markHabitAsDone(habitName) {
 module.exports = {
     createNotionTaskPage,
     createNotionNotePage,
+    createNotionExpensePage,
+    parseExpenseAmount,
     markHabitAsDone,
     normalizeNotionArea,
     updateNotionTaskStatus,
