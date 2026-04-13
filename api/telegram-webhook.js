@@ -46,8 +46,8 @@ function parseGeminiJson(raw) {
     return JSON.parse(cleaned);
 }
 
-async function telegramSendMessage(token, chatId, text, replyMarkup = null) {
-    const body = { chat_id: chatId, text, parse_mode: "Markdown" };
+async function telegramSendMessage(token, chatId, text, replyMarkup = null, parseMode = "Markdown") {
+    const body = { chat_id: chatId, text, parse_mode: parseMode };
     if (replyMarkup) body.reply_markup = replyMarkup;
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
@@ -278,26 +278,24 @@ module.exports = async function handler(req, res) {
         }
 
         if (text === "/help") {
-            await telegramSendMessage(
-                token,
-                chatId,
-                "📖 Manual de Aura AI v2.5\n\n" +
-                    "🛠 Gestión de Tareas\n\n" +
-                    "Área/ Tarea → Crea tarea (Fecha: Hoy).\n" +
-                    "Área/ ver → Filtra pendientes de esa área.\n" +
-                    "/lista → Ver todos los pendientes globales.\n\n" +
-                    "⛪ Segunda Consejería\n\n" +
-                    "m/ [Título] → Crea minuta de reunión.\n" +
-                    "act/ [Nombre] → Nueva actividad/proyecto.\n\n" +
-                    "📝 Notas y Hábitos\n\n" +
-                    "Nota/ [Texto] → Envía a Inbox de notas.\n" +
-                    "Habito/ [Nombre] → Marca hábito de hoy.\n\n" +
-                    "💰 Finanzas\n\n" +
-                    "$ [Monto] [Concepto] → Registro en Inbox Gastos.\n\n" +
-                    "🔘 Botones de Acción\n\n" +
-                    "✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar\n\n" +
-                    "Nota: Para tareas de la Iglesia, usa el prefijo Iglesia/."
-            );
+            const helpHtml =
+                "<b>📖 Manual de Aura AI v2.5</b>\n\n" +
+                "<b>🛠 Gestión de Tareas</b>\n" +
+                "- <code>Área/ Tarea</code> → Crea tarea.\n" +
+                "- <code>Área/ ver</code> → Filtra pendientes.\n" +
+                "- <code>/lista</code> → Ver todos los pendientes.\n\n" +
+                "<b>⛪ Segunda Consejería</b>\n" +
+                "- <code>m/ [Título]</code> → Crea minuta de reunión.\n" +
+                "- <code>act/ [Nombre]</code> → Nueva actividad.\n\n" +
+                "<b>📝 Notas y Hábitos</b>\n" +
+                "- <code>Nota/ [Texto]</code> → Envía a Inbox.\n" +
+                "- <code>Habito/ [Nombre]</code> → Marca hábito de hoy.\n\n" +
+                "<b>💰 Finanzas</b>\n" +
+                "- <code>$ [Monto] [Concepto]</code> → Registro de gasto.\n\n" +
+                "<b>🔘 Botones de Acción</b>\n" +
+                "✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar\n\n" +
+                "<i>Nota: Para tareas de la Iglesia, usa el prefijo Iglesia/.</i>";
+            await telegramSendMessage(token, chatId, helpHtml, null, "HTML");
             return res.status(200).send("OK");
         }
 
