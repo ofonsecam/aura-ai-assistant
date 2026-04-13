@@ -3,7 +3,7 @@ const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
 const notionToken = (process.env.NOTION_TOKEN || '').trim();
 
-const NOTION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NOTION_UUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
 
 const NOTION_HEADERS = {
     Authorization: `Bearer ${notionToken}`,
