@@ -254,10 +254,10 @@ async function createNotionNotePage(title, content) {
     return `❌ Error Notion (${detail}).${hint404}`;
 }
 
-const HABIT_PAGE_TITLE_PROPERTY = 'Name';
+const HABIT_PAGE_TITLE_PROPERTY = 'YYYY-MM-DD';
 
 /**
- * Marca un checkbox de hábito en la fila del día actual (título = "YYYY MM DD", zona Bogotá; coincide con DB_Habitos).
+ * Marca un checkbox en la fila donde la propiedad de título `YYYY-MM-DD` coincide con la fecha del día (valor "YYYY MM DD", Bogotá).
  * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
  */
 async function markHabitAsDone(habitName) {
