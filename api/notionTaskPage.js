@@ -274,7 +274,8 @@ async function createNotionNotePage(title, content) {
 }
 
 /**
- * Convierte amount a número finito (acepta number o string con separadores locales básicos).
+ * Convierte amount a número finito (acepta number o string con separadores locales).
+ * Quita miles con coma (15,000) o con punto (15.000 / 1.234.567); no envía strings sucios a Notion Number.
  * @param {number|string} amount
  * @returns {number}
  */
@@ -292,7 +293,12 @@ function parseExpenseAmount(amount) {
     if (lastComma > lastDot) {
         numStr = s.replace(/\./g, '').replace(',', '.');
     } else {
-        numStr = s.replace(/,/g, '');
+        let t = s.replace(/,/g, '');
+        if (!t.includes(',') && /^\d{1,3}(\.\d{3})+$/.test(t)) {
+            numStr = t.replace(/\./g, '');
+        } else {
+            numStr = t;
+        }
     }
     const n = parseFloat(numStr);
     if (!Number.isFinite(n)) return NaN;
@@ -346,18 +352,18 @@ async function createNotionExpensePage(amount, description) {
 }
 
 /**
- * Crea una fila en la base de minutas: Name (título) y Fecha (hoy, America/Bogota).
+ * Minutas (NOTION_MINUTAS_ID): propiedades — Name (title), Fecha (date). Renombra aquí si en Notion usas otro título.
  * @param {string} title
  */
 async function createNotionMinutePage(title) {
     if (!notionMinutasId) {
-� Falta NOTION_MINUTAS_ID en el entorno (Vercel → Variables).';
+        return '❌ Falta NOTION_MINUTAS_ID en el entorno (Vercel → Variables).';
     }
     if (!NOTION_UUID_RE.test(notionMinutasId)) {
-        return '�� NOTION_MINUTAS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+        return '❌ NOTION_MINUTAS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
     }
     if (!notionToken) {
-        return '�� Falta NOTION_TOKEN en el entorno.';
+        return '❌ Falta NOTION_TOKEN en el entorno.';
     }
     const name = String(title ?? '').trim() || 'Minuta';
     const fecha = getTodayBogotaYmd();
@@ -382,22 +388,23 @@ async function createNotionMinutePage(title) {
         res.status === 404
             ? ' Comprueba en Notion que la integración tenga acceso a la base de minutas y que el ID sea el de la base.'
             : '';
-    return `�� Error Notion (${detail}).${hint404}`;
+    return `❌ Error Notion (${detail}).${hint404}`;
 }
 
 /**
- * Crea una fila en Actividades / proyectos: Actividad (título) y Estado Planificación.
+ * Actividades (NOTION_ACTIVIDADES_PROYECTOS_ID): Actividad (title), Estado (select).
+ * El option del select debe existir en Notion (p. ej. "Planificación").
  * @param {string} name
  */
 async function createNotionActivityPage(name) {
     if (!notionActividadesProyectosId) {
-        return '�� Falta NOTION_ACTIVIDADES_PROYECTOS_ID en el entorno (Vercel → Variables).';
+        return '❌ Falta NOTION_ACTIVIDADES_PROYECTOS_ID en el entorno (Vercel → Variables).';
     }
     if (!NOTION_UUID_RE.test(notionActividadesProyectosId)) {
-        return '�� NOTION_ACTIVIDADES_PROYECTOS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+        return '❌ NOTION_ACTIVIDADES_PROYECTOS_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
     }
     if (!notionToken) {
-        return '�� Falta NOTION_TOKEN en el entorno.';
+        return '❌ Falta NOTION_TOKEN en el entorno.';
     }
     const actividad = String(name ?? '').trim() || 'Actividad';
     const properties = {
@@ -421,8 +428,7 @@ async function createNotionActivityPage(name) {
         res.status === 404
             ? ' Comprueba en Notion que la integración tenga acceso a la base de actividades y que el ID sea el de la base.'
             : '';
-�            : '';
-    return `�� Error Notion (${detail}).${hint404}`;
+    return `❌ Error Notion (${detail}).${hint404}`;
 }
 
 const HABIT_PAGE_TITLE_PROPERTY = 'YYYY-MM-DD';
