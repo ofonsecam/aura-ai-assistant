@@ -11,6 +11,7 @@ const {
     readNotionTasks,
     updateNotionTaskStatus,
     deleteNotionTask,
+    ensureDailyHabitPage,
 } = require("./notionTaskPage");
 
 const HABIT_WHITELIST = new Set([
@@ -203,7 +204,18 @@ async function handleInlineSlashPrefix(token, chatId, text) {
             const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
             habitName = match || habitName;
         }
-        const habitResult = await markHabitAsDone(habitName);
+        let dailyResult;
+        try {
+            dailyResult = await ensureDailyHabitPage();
+        } catch (e) {
+            await telegramSendMessage(token, chatId, e.message || String(e));
+            return true;
+        }
+        if (!dailyResult || !dailyResult.ok || !dailyResult.page_id) {
+            await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+            return true;
+        }
+        const habitResult = await markHabitAsDone(habitName, dailyResult.page_id);
         await telegramSendMessage(token, chatId, habitResult);
         return true;
     }
@@ -474,7 +486,18 @@ module.exports = async function handler(req, res) {
                 const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
                 habitName = match || habitName;
             }
-            const habitResult = await markHabitAsDone(habitName);
+            let dailyResult;
+            try {
+                dailyResult = await ensureDailyHabitPage();
+            } catch (e) {
+                await telegramSendMessage(token, chatId, e.message || String(e));
+                return res.status(200).send("OK");
+            }
+            if (!dailyResult?.ok || !dailyResult.page_id) {
+                await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+                return res.status(200).send("OK");
+            }
+            const habitResult = await markHabitAsDone(habitName, dailyResult.page_id);
             await telegramSendMessage(token, chatId, habitResult);
             return res.status(200).send("OK");
         }

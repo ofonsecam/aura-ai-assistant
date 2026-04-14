@@ -13,7 +13,8 @@ const PROP_TASK_AREA = 'Area';
 const TASK_STATUS_PENDING = 'Pendiente';
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
-const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
+/** Base de hábitos: prioridad NOTION_HABITS_DATABASE_ID (alias NOTION_HABITS_ID). */
+const habitsDatabaseId = (process.env.NOTION_HABITS_DATABASE_ID || process.env.NOTION_HABITS_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
 const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
 const notionActividadesProyectosId = (process.env.NOTION_ACTIVIDADES_PROYECTOS_ID || '').trim();
@@ -477,14 +478,88 @@ async function createNotionActivityPage(name) {
     return `❌ Error Notion (${detail}).${hint404}`;
 }
 
-const HABIT_PAGE_TITLE_PROPERTY = 'YYYY-MM-DD';
+/** Nombre exacto de la columna de título en la base de hábitos (plantilla). */
+const HABIT_PAGE_TITLE_PROPERTY = 'YYYY MM DD';
 
 /**
- * Marca un checkbox en la fila donde la propiedad de título `YYYY-MM-DD` coincide con la fecha del día (valor "YYYY MM DD", Bogotá).
- * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
+ * Buscar o crear la fila del día en la base de hábitos.
+ * @returns {Promise<{ ok: true, page_id: string }>}
  */
-async function markHabitAsDone(habitName) {
-    if (!habitsDatabaseId) return '❌ Falta NOTION_HABITS_ID en el entorno.';
+async function ensureDailyHabitPage() {
+    const habitsDbId = (process.env.NOTION_HABITS_DATABASE_ID || process.env.NOTION_HABITS_ID || '').trim();
+    if (!habitsDbId) {
+        throw new Error('❌ Falta NOTION_HABITS_DATABASE_ID (o NOTION_HABITS_ID) en el entorno.');
+    }
+    if (!NOTION_UUID_RE.test(habitsDbId)) {
+        throw new Error('❌ NOTION_HABITS_DATABASE_ID no es un UUID válido.');
+    }
+
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+    const pad = (n) => String(n).padStart(2, '0');
+    const dayTitle = `${now.getFullYear()} ${pad(now.getMonth() + 1)} ${pad(now.getDate())}`;
+    const dateIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDbId}/query`, {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({
+            filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: dayTitle } }
+        })
+    });
+    if (!queryRes.ok) {
+        let detail = String(queryRes.status);
+        try {
+            const errBody = await queryRes.json();
+            if (errBody?.message) detail = `${queryRes.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        throw new Error(`❌ Error consultando base de hábitos (${detail}).`);
+    }
+    const queryData = await queryRes.json();
+    if (queryData.object === 'error' && queryData.message) {
+        throw new Error(`❌ ${queryData.message}`);
+    }
+    const existing = queryData.results?.[0];
+    if (existing?.id) {
+        return { ok: true, page_id: existing.id };
+    }
+
+    const properties = {
+        [HABIT_PAGE_TITLE_PROPERTY]: { title: [{ text: { content: dayTitle } }] },
+        Date: { date: { start: dateIso } }
+    };
+    const createRes = await fetch('https://api.notion.com/v1/pages', {
+        method: 'POST',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({
+            parent: { database_id: habitsDbId },
+            properties
+        })
+    });
+    if (!createRes.ok) {
+        let detail = String(createRes.status);
+        try {
+            const errBody = await createRes.json();
+            if (errBody?.message) detail = `${createRes.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        throw new Error(`❌ Error creando página diaria de hábitos (${detail}).`);
+    }
+    const data = await createRes.json();
+    if (!data?.id) {
+        throw new Error('❌ Notion no devolvió id de página al crear el día.');
+    }
+    return { ok: true, page_id: data.id };
+}
+
+/**
+ * Marca el checkbox del hábito en la página del día (Bogotá).
+ * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
+ * @param {string} [pageId] Si viene de ensureDailyHabitPage, se omite la query.
+ * @returns {Promise<string>} Mensaje de éxito o error (prefijo ❌).
+ */
+async function markHabitAsDone(habitName, pageId) {
+    if (!habitsDatabaseId) {
+        return '❌ Falta NOTION_HABITS_DATABASE_ID (o NOTION_HABITS_ID) en el entorno.';
+    }
     const key = (habitName || '').trim();
     if (!key) return '❌ Indica el nombre del hábito.';
 
@@ -492,25 +567,45 @@ async function markHabitAsDone(habitName) {
     const pad = (n) => String(n).padStart(2, '0');
     const todayStr = `${now.getFullYear()} ${pad(now.getMonth() + 1)} ${pad(now.getDate())}`;
 
-    const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDatabaseId}/query`, {
-        method: 'POST',
-        headers: NOTION_HEADERS,
-        body: JSON.stringify({
-            filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: todayStr } }
-        })
-    });
-    const queryData = await queryRes.json();
-    const page = queryData.results?.[0];
-    if (!page) return `❌ No hay página de hábitos con título "${todayStr}".`;
+    let targetPageId = pageId;
+    if (!targetPageId) {
+        const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDatabaseId}/query`, {
+            method: 'POST',
+            headers: NOTION_HEADERS,
+            body: JSON.stringify({
+                filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: todayStr } }
+            })
+        });
+        if (!queryRes.ok) {
+            let detail = String(queryRes.status);
+            try {
+                const errBody = await queryRes.json();
+                if (errBody?.message) detail = `${queryRes.status}: ${errBody.message}`;
+            } catch (_) { /* ignore */ }
+            return `❌ Error buscando la página del día (${detail}).`;
+        }
+        const queryData = await queryRes.json();
+        const page = queryData.results?.[0];
+        if (!page?.id) {
+            return `❌ No hay página de hábitos con título "${todayStr}". Usa habito/ tras crear el día o revisa la base.`;
+        }
+        targetPageId = page.id;
+    }
 
-    const patchRes = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
+    const patchRes = await fetch(`https://api.notion.com/v1/pages/${targetPageId}`, {
         method: 'PATCH',
         headers: NOTION_HEADERS,
         body: JSON.stringify({ properties: { [key]: { checkbox: true } } })
     });
-    return patchRes.ok
-        ? `✅ Hábito "${key}" marcado para ${todayStr}.`
-        : `❌ No pude actualizar el hábito (¿existe la propiedad "${key}"?).`;
+    if (!patchRes.ok) {
+        let detail = String(patchRes.status);
+        try {
+            const errBody = await patchRes.json();
+            if (errBody?.message) detail = `${patchRes.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        return `❌ No se pudo marcar el hábito "${key}" (${detail}).`;
+    }
+    return `✅ Hábito "${key}" marcado para ${todayStr}.`;
 }
 
 module.exports = {
@@ -525,5 +620,6 @@ module.exports = {
     updateNotionTaskStatus,
     readNotionTasks,
     deleteNotionTask,
-    getOverdueTasks
+    getOverdueTasks,
+    ensureDailyHabitPage,
 };
