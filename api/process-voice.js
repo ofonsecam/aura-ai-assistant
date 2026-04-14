@@ -104,6 +104,14 @@ The JSON must have exactly these three keys:
         });
     }
 
+    if (!notionData.ok) {
+        return res.status(502).json({
+            success: false,
+            error: notionData.error,
+            transcription: jsonResponse,
+        });
+    }
+
     return res.status(200).json({
         success: true,
         transcription: jsonResponse,

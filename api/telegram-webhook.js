@@ -70,6 +70,35 @@ $ [Monto] [Concepto] → Registro gasto
 
 Nota: Para Iglesia, usa el prefijo Iglesia/.`;
 
+/**
+ * Respuesta de éxito/error tras crear tarea en Notion (Database ID, ID página, enlace API).
+ * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string } | { ok: false, error: string }} result
+ * @returns {{ text: string, parseMode: string }}
+ */
+function formatTaskSavedTelegramReply(result) {
+    if (!result || result.ok === false) {
+        return {
+            text: result?.error || "❌ No se pudo guardar la tarea en Notion.",
+            parseMode: "Markdown",
+        };
+    }
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const escAttr = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    const dbId = esc(result.databaseId || "");
+    const pageId = esc(result.id || "");
+    const url = typeof result.url === "string" ? result.url.trim() : "";
+    const linkLine = url
+        ? `<a href="${escAttr(url)}">Abrir en Notion</a>`
+        : "<i>Sin URL en la respuesta de la API.</i>";
+    const text = [
+        "✅ Tarea guardada.",
+        `<b>Database ID:</b> <code>${dbId}</code>`,
+        `<b>ID página:</b> <code>${pageId}</code>`,
+        linkLine,
+    ].join("\n");
+    return { text, parseMode: "HTML" };
+}
+
 function parseGeminiJson(raw) {
     const cleaned = String(raw)
         .trim()
@@ -229,12 +258,9 @@ async function handleInlineSlashPrefix(token, chatId, text) {
         return true;
     }
 
-    await createNotionTaskPage({ Name: content, Area: prefix });
-    await telegramSendMessage(
-        token,
-        chatId,
-        `✅ Tarea creada: *${content}* (${normalizeNotionArea(prefix)})`
-    );
+    const taskResult = await createNotionTaskPage({ Name: content, Area: prefix });
+    const taskReply = formatTaskSavedTelegramReply(taskResult);
+    await telegramSendMessage(token, chatId, taskReply.text, null, taskReply.parseMode);
     return true;
 }
 
@@ -369,12 +395,9 @@ module.exports = async function handler(req, res) {
                 );
                 return res.status(200).send("OK");
             }
-            await createNotionTaskPage({ Name: taskName, Area: area });
-            await telegramSendMessage(
-                token,
-                chatId,
-                `✅ Tarea creada: *${taskName}* (${normalizeNotionArea(area)})`
-            );
+            const plusResult = await createNotionTaskPage({ Name: taskName, Area: area });
+            const plusReply = formatTaskSavedTelegramReply(plusResult);
+            await telegramSendMessage(token, chatId, plusReply.text, null, plusReply.parseMode);
             return res.status(200).send("OK");
         }
 
@@ -418,16 +441,13 @@ module.exports = async function handler(req, res) {
                 await telegramSendMessage(token, chatId, "⚠️ No pude extraer el nombre de la tarea.");
                 return res.status(200).send("OK");
             }
-            await createNotionTaskPage({
+            const geminiTaskResult = await createNotionTaskPage({
                 Name: name,
                 Area: data.Area || "Personales",
                 Fecha: data.Fecha || "",
             });
-            await telegramSendMessage(
-                token,
-                chatId,
-                `✅ Tarea creada: *${name}* (${normalizeNotionArea(data.Area || "Personales")})`
-            );
+            const geminiReply = formatTaskSavedTelegramReply(geminiTaskResult);
+            await telegramSendMessage(token, chatId, geminiReply.text, null, geminiReply.parseMode);
             return res.status(200).send("OK");
         }
 

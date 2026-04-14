@@ -12,7 +12,14 @@ module.exports = async function handler(req, res) {
             return res.status(400).json({ error: "Falta el nombre de la tarea (taskName)" });
         }
 
-        const response = await createNotionTaskPage(taskName);
+        const response = await createNotionTaskPage({
+            Name: taskName,
+            Area: "Personales",
+        });
+
+        if (!response.ok) {
+            return res.status(502).json({ success: false, error: response.error });
+        }
 
         res.status(200).json({ success: true, message: "Tarea creada en Notion", data: response });
     } catch (error) {

@@ -1,4 +1,17 @@
 const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
+/** Etiqueta humana para logs/Telegram (opcional: NOTION_TASKS_DATABASE_NAME en Vercel). */
+const TASKS_DATABASE_DISPLAY_NAME = (process.env.NOTION_TASKS_DATABASE_NAME || 'Base de tareas').trim();
+/**
+ * Nombres de propiedades del esquema de la base de tareas en Notion (deben coincidir al carácter).
+ * Confirmado: columna "Area" sin tilde.
+ */
+const PROP_TASK_NAME = 'Name';
+const PROP_TASK_ESTADO = 'Estado';
+const PROP_TASK_AREA = 'Area';
+const PROP_TASK_DATE = 'Date';
+/** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
+const TASK_STATUS_PENDING = 'Pendiente';
+
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
@@ -81,9 +94,9 @@ async function findBestFuzzyMatch(searchName) {
         body: JSON.stringify({ 
             filter: { 
                 or: [
-                    { property: 'Estado', select: { equals: 'Pendiente' } },
-                    { property: 'Estado', select: { equals: 'Haciendo' } },
-                    { property: 'Estado', select: { equals: 'Pausado' } }
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Pausado' } }
                 ] 
             } 
         })
@@ -93,7 +106,7 @@ async function findBestFuzzyMatch(searchName) {
     let bestMatch = { pageId: null, name: '', distance: Infinity };
     const target = searchName.trim().toLowerCase();
     for (const page of data.results) {
-        const pageName = page.properties?.['Name']?.title?.[0]?.text?.content?.trim() || '';
+        const pageName = page.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content?.trim() || '';
         if (!pageName) continue;
         const dist = getLevenshteinDistance(target, pageName.toLowerCase());
         if (dist < bestMatch.distance) bestMatch = { pageId: page.id, name: pageName, distance: dist };
@@ -104,7 +117,8 @@ async function findBestFuzzyMatch(searchName) {
 
 async function createNotionTaskPage(taskData) {
     let name = (taskData.Name || '').trim();
-    let area = normalizeNotionArea(taskData.Area || 'Personales');
+    const areaRaw = String(taskData.Area != null ? taskData.Area : 'Personales').trim();
+    let area = normalizeNotionArea(areaRaw).trim();
     const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
     let fecha = resolveNaturalDate(fechaRaw);
     if (!fecha) fecha = getTodayBogotaYmd();
@@ -112,18 +126,36 @@ async function createNotionTaskPage(taskData) {
         if (!name.startsWith('🚨')) name = '🚨 ' + name;
         if (area === 'Personales') area = 'IA Dev';
     }
+    area = area.trim();
     const properties = {
-        'Name': { title: [{ text: { content: name } }] },
-        'Estado': { select: { name: 'Pendiente' } },
-        'Area': { select: { name: area } },
-        'Date': { date: { start: fecha } }
+        [PROP_TASK_NAME]: { title: [{ text: { content: name } }] },
+        [PROP_TASK_ESTADO]: { select: { name: TASK_STATUS_PENDING } },
+        [PROP_TASK_AREA]: { select: { name: area.trim() } },
+        [PROP_TASK_DATE]: { date: { start: fecha } }
     };
     const res = await fetch(`https://api.notion.com/v1/pages`, {
         method: 'POST',
         headers: NOTION_HEADERS,
         body: JSON.stringify({ parent: { database_id: databaseId }, properties })
     });
-    return res.ok ? await res.json() : `❌ Error Notion: ${res.status}`;
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) {
+            /* ignore */
+        }
+        return { ok: false, error: `❌ Error Notion (${detail}).` };
+    }
+    const data = await res.json();
+    return {
+        ok: true,
+        id: data.id,
+        url: typeof data.url === 'string' ? data.url.trim() : '',
+        databaseId,
+        databaseName: TASKS_DATABASE_DISPLAY_NAME
+    };
 }
 
 /**
@@ -145,14 +177,14 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
     const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
         headers: NOTION_HEADERS,
-        body: JSON.stringify({ properties: { 'Estado': { select: { name: newStatus } } } })
+        body: JSON.stringify({ properties: { [PROP_TASK_ESTADO]: { select: { name: newStatus } } } })
     });
     if (!res.ok) {
         return { ok: false, text: '❌ Error al actualizar.' };
     }
     const data = await res.json();
     const nameFromPage =
-        data?.properties?.['Name']?.title?.[0]?.text?.content?.trim() || null;
+        data?.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content?.trim() || null;
     const resolvedName = taskName || nameFromPage || 'Tarea';
     return {
         ok: true,
@@ -162,17 +194,17 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 }
 
 async function readNotionTasks(filterArea, filterDate) {
-    const areaFilter = filterArea ? normalizeNotionArea(String(filterArea)) : '';
+    const areaFilter = filterArea ? normalizeNotionArea(String(filterArea).trim()) : '';
     const statusFilter = {
         or: [
-            { property: 'Estado', select: { equals: 'Pendiente' } },
-            { property: 'Estado', select: { equals: 'Haciendo' } },
-            { property: 'Estado', select: { equals: 'Pausado' } }
+            { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+            { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+            { property: PROP_TASK_ESTADO, select: { equals: 'Pausado' } }
         ]
     };
     const filters = [statusFilter];
-    if (areaFilter) filters.push({ property: 'Area', select: { equals: areaFilter } });
-    if (filterDate) filters.push({ property: 'Date', date: { equals: filterDate } });
+    if (areaFilter) filters.push({ property: PROP_TASK_AREA, select: { equals: areaFilter } });
+    if (filterDate) filters.push({ property: PROP_TASK_DATE, date: { equals: filterDate } });
 
     const filter = filters.length === 1 ? filters[0] : { and: filters };
 
@@ -187,9 +219,9 @@ async function readNotionTasks(filterArea, filterDate) {
 
     const tasks = data.results.map((p) => ({
         id: p.id,
-        name: p.properties['Name']?.title[0]?.text?.content || 'Sin título',
-        status: p.properties['Estado']?.select?.name || '---',
-        area: p.properties['Area']?.select?.name || '---'
+        name: p.properties[PROP_TASK_NAME]?.title[0]?.text?.content || 'Sin título',
+        status: p.properties[PROP_TASK_ESTADO]?.select?.name || '---',
+        area: p.properties[PROP_TASK_AREA]?.select?.name || '---'
     }));
 
     const text =
@@ -222,8 +254,8 @@ async function getOverdueTasks() {
         body: JSON.stringify({
             filter: {
                 and: [
-                    { or: [{ property: 'Estado', select: { equals: 'Pendiente' } }, { property: 'Estado', select: { equals: 'Haciendo' } }] },
-                    { property: 'Date', date: { before: todayStr } }
+                    { or: [{ property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } }, { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } }] },
+                    { property: PROP_TASK_DATE, date: { before: todayStr } }
                 ]
             }
         })
