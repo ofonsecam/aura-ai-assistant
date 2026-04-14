@@ -15,15 +15,6 @@ const {
     getHabitsDatabaseNotionUrl,
 } = require("./notionTaskPage");
 
-const HABIT_WHITELIST = new Set([
-    "Escrituras",
-    "Oración",
-    "Estiramientos",
-    "Plan del día",
-    "Detalle Esposa",
-    "No cai",
-]);
-
 const SYSTEM_INSTRUCTION = `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
 {"intent": "TASK"|"NOTE"|"HABIT"|"QUERY", "data": { ... }}
 
@@ -33,7 +24,7 @@ Reglas de clasificación:
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
 - HABIT: el usuario indica que completó o marcó un hábito del día (ej. oración, escrituras).
-  data debe incluir: "habitName" (string) que DEBE ser exactamente uno de: Escrituras, Oración, Estiramientos, Plan del día, Detalle Esposa, No cai. Si no coincide ninguno, elige el más cercano semánticamente dentro de esa lista.
+  data debe incluir: "habitName" (string, nombre del hábito tal como lo dice; el servidor lo cruzará con las columnas checkbox de Notion).
 - QUERY: el usuario pregunta qué debe hacer, qué tiene pendiente, su lista de tareas, o consulta sus pendientes sin crear nada nuevo.
   data puede ser {} o incluir campos opcionales si aclaran el filtro (no es obligatorio).
 
@@ -178,20 +169,6 @@ function isHabitSlashPrefix(parsed) {
 }
 
 /**
- * Nombre del checkbox en Notion: coincide con el texto; si está en la whitelist, usa la forma canónica.
- * @param {string} raw
- * @returns {string}
- */
-function resolveHabitCheckboxName(raw) {
-    const s = String(raw ?? "").trim();
-    if (!s) return "";
-    if (HABIT_WHITELIST.has(s)) return s;
-    const lower = s.toLowerCase();
-    const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
-    return match || s;
-}
-
-/**
  * Prioridad: antes de Area/ tarea. Solo prefijos habito/ y hábito/ (acentos opcionales).
  * @returns {Promise<boolean>} true si el mensaje era comando de hábito.
  */
@@ -204,7 +181,7 @@ async function tryHandleHabitSlashCommand(token, chatId, text) {
         return true;
     }
 
-    const habitName = resolveHabitCheckboxName(parsed.content);
+    const habitName = parsed.content.trim();
     let dailyResult;
     try {
         dailyResult = await ensureDailyHabitPage();
@@ -218,13 +195,13 @@ async function tryHandleHabitSlashCommand(token, chatId, text) {
     }
 
     const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
-    if (markResult.startsWith("❌")) {
-        await telegramSendMessage(token, chatId, markResult);
+    if (!markResult.ok) {
+        await telegramSendMessage(token, chatId, markResult.message);
         return true;
     }
 
     const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${habitName} registrado en la base de hábitos.`;
+    let msg = `✅ Hábito ${markResult.resolvedName} registrado en la base de hábitos.`;
     if (habitsLink) msg += `\n${habitsLink}`;
     await telegramSendMessage(token, chatId, msg);
     return true;
@@ -243,12 +220,12 @@ async function sendHabitIntentResult(token, chatId, habitName) {
         return;
     }
     const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
-    if (markResult.startsWith("❌")) {
-        await telegramSendMessage(token, chatId, markResult);
+    if (!markResult.ok) {
+        await telegramSendMessage(token, chatId, markResult.message);
         return;
     }
     const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${habitName} registrado en la base de hábitos.`;
+    let msg = `✅ Hábito ${markResult.resolvedName} registrado en la base de hábitos.`;
     if (habitsLink) msg += `\n${habitsLink}`;
     await telegramSendMessage(token, chatId, msg);
 }
@@ -548,7 +525,6 @@ module.exports = async function handler(req, res) {
                 await telegramSendMessage(token, chatId, "⚠️ No identifiqué el hábito.");
                 return res.status(200).send("OK");
             }
-            habitName = resolveHabitCheckboxName(habitName);
             await sendHabitIntentResult(token, chatId, habitName);
             return res.status(200).send("OK");
         }

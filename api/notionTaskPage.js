@@ -481,10 +481,89 @@ async function createNotionActivityPage(name) {
 /** Nombre exacto de la columna de título en la base de hábitos (plantilla). */
 const HABIT_PAGE_TITLE_PROPERTY = 'YYYY MM DD';
 
+/** Caché de nombres de columnas checkbox (schema GET). */
+let habitsCheckboxSchemaCache = { names: null, fetchedAt: 0 };
+const HABITS_SCHEMA_CACHE_MS = 5 * 60 * 1000;
+
 /**
- * Buscar o crear la fila del día en la base de hábitos.
- * @returns {Promise<{ ok: true, page_id: string }>}
+ * Normaliza texto para comparar hábitos: minúsculas, espacios colapsados, sin tildes.
+ * @param {string} str
+ * @returns {string}
  */
+const normalizeString = (str) =>
+    String(str ?? '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+/**
+ * Lee la base de hábitos y devuelve los nombres reales de propiedades tipo checkbox.
+ * @returns {Promise<{ ok: true, names: string[] } | { ok: false, message: string }>}
+ */
+async function fetchHabitsDatabaseCheckboxPropertyNames() {
+    if (!habitsDatabaseId) {
+        return { ok: false, message: '❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.' };
+    }
+    const now = Date.now();
+    if (
+        habitsCheckboxSchemaCache.names &&
+        now - habitsCheckboxSchemaCache.fetchedAt < HABITS_SCHEMA_CACHE_MS
+    ) {
+        return { ok: true, names: habitsCheckboxSchemaCache.names };
+    }
+
+    const res = await fetch(`https://api.notion.com/v1/databases/${habitsDatabaseId}`, {
+        method: 'GET',
+        headers: NOTION_HEADERS
+    });
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        return { ok: false, message: `❌ No se pudo leer el esquema de la base de hábitos (${detail}).` };
+    }
+    const data = await res.json();
+    const props = data.properties || {};
+    const names = Object.keys(props).filter((k) => props[k]?.type === 'checkbox');
+    names.sort((a, b) => a.localeCompare(b, 'es'));
+    habitsCheckboxSchemaCache = { names, fetchedAt: now };
+    return { ok: true, names };
+}
+
+/**
+ * Resuelve el nombre de columna checkbox: igualdad normalizada y, si no hay, distancia de Levenshtein sobre cadenas normalizadas.
+ * @param {string} userInput
+ * @param {string[]} checkboxNames
+ * @returns {string | null}
+ */
+function resolveHabitPropertyName(userInput, checkboxNames) {
+    const target = normalizeString(userInput);
+    if (!target) return null;
+
+    for (const name of checkboxNames) {
+        if (normalizeString(name) === target) return name;
+    }
+
+    let bestName = null;
+    let bestDist = Infinity;
+    for (const name of checkboxNames) {
+        const n = normalizeString(name);
+        const d = getLevenshteinDistance(target, n);
+        if (d < bestDist) {
+            bestDist = d;
+            bestName = name;
+        }
+    }
+    if (!bestName) return null;
+    const maxLen = Math.max(target.length, normalizeString(bestName).length);
+    const threshold = Math.max(2, Math.floor(maxLen * 0.35));
+    return bestDist <= threshold ? bestName : null;
+}
+
 /**
  * Enlace a la base de hábitos en Notion (UUID sin guiones). Opcional: NOTION_HABITS_URL completo.
  * @returns {string}
@@ -497,6 +576,10 @@ function getHabitsDatabaseNotionUrl() {
     return `https://www.notion.so/${id.replace(/-/g, '')}`;
 }
 
+/**
+ * Buscar o crear la fila del día en la base de hábitos.
+ * @returns {Promise<{ ok: true, page_id: string }>}
+ */
 async function ensureDailyHabitPage() {
     const habitsDbId = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
     if (!habitsDbId) {
@@ -564,16 +647,32 @@ async function ensureDailyHabitPage() {
 
 /**
  * Marca el checkbox del hábito en la página del día (Bogotá).
- * @param {string} habitName Nombre exacto de la columna checkbox en Notion (ej. "Escrituras").
+ * Resuelve el nombre de columna contra el esquema Notion (checkbox): normalizeString + fuzzy Levenshtein.
+ * @param {string} habitName Texto del usuario (ej. "oracion", "ORACIÓN").
  * @param {string} [pageId] Si viene de ensureDailyHabitPage, se omite la query.
- * @returns {Promise<string>} Mensaje de éxito o error (prefijo ❌).
+ * @returns {Promise<{ ok: true, resolvedName: string } | { ok: false, message: string }>}
  */
 async function markHabitAsDone(habitName, pageId) {
     if (!habitsDatabaseId) {
-        return '❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.';
+        return { ok: false, message: '❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.' };
     }
-    const key = (habitName || '').trim();
-    if (!key) return '❌ Indica el nombre del hábito.';
+    const raw = (habitName || '').trim();
+    if (!raw) return { ok: false, message: '❌ Indica el nombre del hábito.' };
+
+    const schema = await fetchHabitsDatabaseCheckboxPropertyNames();
+    if (!schema.ok) return { ok: false, message: schema.message };
+    if (!schema.names.length) {
+        return { ok: false, message: '❌ La base de hábitos no tiene columnas de tipo checkbox.' };
+    }
+
+    const resolvedKey = resolveHabitPropertyName(raw, schema.names);
+    if (!resolvedKey) {
+        const list = schema.names.join(', ');
+        return {
+            ok: false,
+            message: `❌ No encontré el hábito "${raw}". Los hábitos disponibles son: ${list}`
+        };
+    }
 
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
     const pad = (n) => String(n).padStart(2, '0');
@@ -594,12 +693,15 @@ async function markHabitAsDone(habitName, pageId) {
                 const errBody = await queryRes.json();
                 if (errBody?.message) detail = `${queryRes.status}: ${errBody.message}`;
             } catch (_) { /* ignore */ }
-            return `❌ Error buscando la página del día (${detail}).`;
+            return { ok: false, message: `❌ Error buscando la página del día (${detail}).` };
         }
         const queryData = await queryRes.json();
         const page = queryData.results?.[0];
         if (!page?.id) {
-            return `❌ No hay página de hábitos con título "${todayStr}". Usa habito/ tras crear el día o revisa la base.`;
+            return {
+                ok: false,
+                message: `❌ No hay página de hábitos con título "${todayStr}". Usa habito/ tras crear el día o revisa la base.`
+            };
         }
         targetPageId = page.id;
     }
@@ -607,7 +709,7 @@ async function markHabitAsDone(habitName, pageId) {
     const patchRes = await fetch(`https://api.notion.com/v1/pages/${targetPageId}`, {
         method: 'PATCH',
         headers: NOTION_HEADERS,
-        body: JSON.stringify({ properties: { [key]: { checkbox: true } } })
+        body: JSON.stringify({ properties: { [resolvedKey]: { checkbox: true } } })
     });
     if (!patchRes.ok) {
         let detail = String(patchRes.status);
@@ -615,9 +717,9 @@ async function markHabitAsDone(habitName, pageId) {
             const errBody = await patchRes.json();
             if (errBody?.message) detail = `${patchRes.status}: ${errBody.message}`;
         } catch (_) { /* ignore */ }
-        return `❌ No se pudo marcar el hábito "${key}" (${detail}).`;
+        return { ok: false, message: `❌ No se pudo marcar el hábito "${resolvedKey}" (${detail}).` };
     }
-    return `✅ Hábito "${key}" marcado para ${todayStr}.`;
+    return { ok: true, resolvedName: resolvedKey };
 }
 
 module.exports = {
