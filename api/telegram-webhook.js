@@ -89,19 +89,19 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null, pars
     });
 }
 
+// --- BOTONES FIX: el botón 🚀/Pausar envía pause_task en vez de doing ---
 async function sendPendingTaskList(token, chatId, filterArea = "") {
     const { text: listText, tasks } = await readNotionTasks(filterArea || "", "");
     const keyboard = {
         inline_keyboard: tasks.slice(0, 10).map((t, i) => [
             { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
             { text: `🔵 ${i + 1}`, callback_data: `doing_blue:${t.id}` },
-            { text: `🚀 ${i + 1}`, callback_data: `doing:${t.id}` },
+            { text: `🚀 ${i + 1}`, callback_data: `pause_task:${t.id}` }, // CAMBIO AQUÍ
             { text: `🗑️ ${i + 1}`, callback_data: `del:${t.id}` },
         ]),
     };
     await telegramSendMessage(token, chatId, listText, keyboard);
 }
-
 /**
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
  * @returns {null | { prefix: string, prefixNorm: string, content: string }}
@@ -274,6 +274,18 @@ module.exports = async function handler(req, res) {
         if (action === "del") {
             const reply = await deleteNotionTask(pageId, true);
             await telegramSendMessage(token, cb.message.chat.id, reply);
+            return res.status(200).send("OK");
+        }
+        // --- BOTONES FIX: Nuevo control de pause_task para 🚀 ---
+        if (action === "pause_task") {
+            const status = "Pausado"; // nombre exacto para el estado de pausa
+            const result = await updateNotionTaskStatus(pageId, status, true);
+            // Mensaje personalizado de pausa
+            const messageText =
+                result.ok
+                    ? `🚀 Tarea pausada: ${result.taskName}`
+                    : result.text;
+            await telegramSendMessage(token, cb.message.chat.id, messageText);
             return res.status(200).send("OK");
         }
         const status =
