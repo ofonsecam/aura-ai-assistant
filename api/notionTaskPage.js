@@ -2,13 +2,13 @@ const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 /** Etiqueta humana para logs/Telegram (opcional: NOTION_TASKS_DATABASE_NAME en Vercel). */
 const TASKS_DATABASE_DISPLAY_NAME = (process.env.NOTION_TASKS_DATABASE_NAME || 'Base de tareas').trim();
 /**
- * Nombres de propiedades del esquema de la base de tareas en Notion (deben coincidir al carácter).
- * Confirmado: columna "Area" sin tilde.
+ * Esquema de la base de tareas (solo estas claves en creación/lectura de tareas).
+ * Título: Name; fecha: Fecha (date YYYY-MM-DD); Area; Estado.
  */
 const PROP_TASK_NAME = 'Name';
 const PROP_TASK_ESTADO = 'Estado';
+const PROP_TASK_FECHA = 'Fecha';
 const PROP_TASK_AREA = 'Area';
-const PROP_TASK_DATE = 'Date';
 /** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
 const TASK_STATUS_PENDING = 'Pendiente';
 
@@ -53,21 +53,28 @@ function getLevenshteinDistance(a, b) {
     return matrix[bl][al];
 }
 
-function resolveNaturalDate(input) {
-    if (!input) return input;
-    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Bogota"}));
-    if (/^hoy$/i.test(input)) return now.toISOString().slice(0, 10);
-    if (/^mañana$|^manana$/i.test(input)) {
-        now.setDate(now.getDate() + 1);
-        return now.toISOString().slice(0, 10);
-    }
-    return input;
-}
-
 /** Fecha local YYYY-MM-DD en zona America/Bogota. */
 function getTodayBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Convierte texto o YYYY-MM-DD a fecha de tarea; vacío si no aplica.
+ * @param {string} input
+ * @returns {string} YYYY-MM-DD o ""
+ */
+function resolveNaturalDate(input) {
+    const raw = String(input ?? '').trim();
+    if (!raw) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    if (/^hoy$/i.test(raw)) return now.toISOString().slice(0, 10);
+    if (/^mañana$|^manana$/i.test(raw)) {
+        now.setDate(now.getDate() + 1);
+        return now.toISOString().slice(0, 10);
+    }
+    return raw;
 }
 
 /**
@@ -119,19 +126,21 @@ async function createNotionTaskPage(taskData) {
     let name = (taskData.Name || '').trim();
     const areaRaw = String(taskData.Area != null ? taskData.Area : 'Personales').trim();
     let area = normalizeNotionArea(areaRaw).trim();
-    const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
-    let fecha = resolveNaturalDate(fechaRaw);
-    if (!fecha) fecha = getTodayBogotaYmd();
     if (/\b(URGENTE|YA|IMPORTANTE)\b/i.test(name)) {
         if (!name.startsWith('🚨')) name = '🚨 ' + name;
         if (area === 'Personales') area = 'IA Dev';
     }
     area = area.trim();
+    const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
+    let fechaYmd = resolveNaturalDate(fechaRaw);
+    if (!fechaYmd || !/^\d{4}-\d{2}-\d{2}$/.test(fechaYmd)) {
+        fechaYmd = getTodayBogotaYmd();
+    }
     const properties = {
         [PROP_TASK_NAME]: { title: [{ text: { content: name } }] },
         [PROP_TASK_ESTADO]: { select: { name: TASK_STATUS_PENDING } },
         [PROP_TASK_AREA]: { select: { name: area.trim() } },
-        [PROP_TASK_DATE]: { date: { start: fecha } }
+        [PROP_TASK_FECHA]: { date: { start: fechaYmd } }
     };
     const res = await fetch(`https://api.notion.com/v1/pages`, {
         method: 'POST',
@@ -204,7 +213,7 @@ async function readNotionTasks(filterArea, filterDate) {
     };
     const filters = [statusFilter];
     if (areaFilter) filters.push({ property: PROP_TASK_AREA, select: { equals: areaFilter } });
-    if (filterDate) filters.push({ property: PROP_TASK_DATE, date: { equals: filterDate } });
+    if (filterDate) filters.push({ property: PROP_TASK_FECHA, date: { equals: String(filterDate).trim() } });
 
     const filter = filters.length === 1 ? filters[0] : { and: filters };
 
@@ -246,7 +255,7 @@ async function deleteNotionTask(searchNameOrId, isId = false) {
 }
 
 async function getOverdueTasks() {
-    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Bogota"}));
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     const todayStr = now.toISOString().slice(0, 10);
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
@@ -254,8 +263,13 @@ async function getOverdueTasks() {
         body: JSON.stringify({
             filter: {
                 and: [
-                    { or: [{ property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } }, { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } }] },
-                    { property: PROP_TASK_DATE, date: { before: todayStr } }
+                    {
+                        or: [
+                            { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                            { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } }
+                        ]
+                    },
+                    { property: PROP_TASK_FECHA, date: { before: todayStr } }
                 ]
             }
         })

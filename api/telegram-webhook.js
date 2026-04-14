@@ -27,7 +27,7 @@ const SYSTEM_INSTRUCTION = `Eres el router de Aura AI. Analiza el mensaje del us
 
 Reglas de clasificación:
 - TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha.
-  data debe incluir: "Name" (string, título claro), "Area" (una de: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica).
+  data debe incluir: "Name" (string, título claro), "Area" (una de: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; se guarda en Notion en la propiedad Fecha).
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
 - HABIT: el usuario indica que completó o marcó un hábito del día (ej. oración, escrituras).
@@ -35,7 +35,7 @@ Reglas de clasificación:
 - QUERY: el usuario pregunta qué debe hacer, qué tiene pendiente, su lista de tareas, o consulta sus pendientes sin crear nada nuevo.
   data puede ser {} o incluir campos opcionales si aclaran el filtro (no es obligatorio).
 
-Usa la fecha/hora de "Contexto temporal" para interpretar "hoy", "mañana", "pasado mañana" y calcular Fecha en YYYY-MM-DD cuando corresponda a TASK.`;
+Usa la fecha/hora de "Contexto temporal" para interpretar "hoy", "mañana", "pasado mañana" y rellenar Fecha en YYYY-MM-DD cuando corresponda a TASK.`;
 
 /** Cuerpo /help (HTML mínimo: solo el título en <b> para evitar Entity_parse_failed). */
 const helpMessage = `
