@@ -13,8 +13,8 @@ const PROP_TASK_AREA = 'Area';
 const TASK_STATUS_PENDING = 'Pendiente';
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
-/** Base de hábitos: prioridad NOTION_HABITS_DATABASE_ID (alias NOTION_HABITS_ID). */
-const habitsDatabaseId = (process.env.NOTION_HABITS_DATABASE_ID || process.env.NOTION_HABITS_ID || '').trim();
+/** Base de hábitos: prioridad NOTION_HABITS_ID (Vercel), alias NOTION_HABITS_DATABASE_ID. */
+const habitsDatabaseId = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
 const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
 const notionActividadesProyectosId = (process.env.NOTION_ACTIVIDADES_PROYECTOS_ID || '').trim();
@@ -485,13 +485,25 @@ const HABIT_PAGE_TITLE_PROPERTY = 'YYYY MM DD';
  * Buscar o crear la fila del día en la base de hábitos.
  * @returns {Promise<{ ok: true, page_id: string }>}
  */
+/**
+ * Enlace a la base de hábitos en Notion (UUID sin guiones). Opcional: NOTION_HABITS_URL completo.
+ * @returns {string}
+ */
+function getHabitsDatabaseNotionUrl() {
+    const custom = (process.env.NOTION_HABITS_URL || '').trim();
+    if (custom) return custom;
+    const id = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
+    if (!id) return '';
+    return `https://www.notion.so/${id.replace(/-/g, '')}`;
+}
+
 async function ensureDailyHabitPage() {
-    const habitsDbId = (process.env.NOTION_HABITS_DATABASE_ID || process.env.NOTION_HABITS_ID || '').trim();
+    const habitsDbId = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
     if (!habitsDbId) {
-        throw new Error('❌ Falta NOTION_HABITS_DATABASE_ID (o NOTION_HABITS_ID) en el entorno.');
+        throw new Error('❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.');
     }
     if (!NOTION_UUID_RE.test(habitsDbId)) {
-        throw new Error('❌ NOTION_HABITS_DATABASE_ID no es un UUID válido.');
+        throw new Error('❌ NOTION_HABITS_ID no es un UUID válido.');
     }
 
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
@@ -558,7 +570,7 @@ async function ensureDailyHabitPage() {
  */
 async function markHabitAsDone(habitName, pageId) {
     if (!habitsDatabaseId) {
-        return '❌ Falta NOTION_HABITS_DATABASE_ID (o NOTION_HABITS_ID) en el entorno.';
+        return '❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.';
     }
     const key = (habitName || '').trim();
     if (!key) return '❌ Indica el nombre del hábito.';
@@ -622,4 +634,5 @@ module.exports = {
     deleteNotionTask,
     getOverdueTasks,
     ensureDailyHabitPage,
+    getHabitsDatabaseNotionUrl,
 };

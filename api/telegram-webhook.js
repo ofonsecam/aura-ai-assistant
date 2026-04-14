@@ -12,6 +12,7 @@ const {
     updateNotionTaskStatus,
     deleteNotionTask,
     ensureDailyHabitPage,
+    getHabitsDatabaseNotionUrl,
 } = require("./notionTaskPage");
 
 const HABIT_WHITELIST = new Set([
@@ -163,6 +164,95 @@ function parseInlineSlashPrefix(text) {
     return { prefix, prefixNorm: prefix.toLowerCase(), content };
 }
 
+/** Quita tildes para comparar habito/hábito/Hábito de forma uniforme. */
+function stripDiacritics(str) {
+    return String(str)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** true si el prefijo es habito o hábito (sin importar mayúsculas/acentos). */
+function isHabitSlashPrefix(parsed) {
+    if (!parsed) return false;
+    return stripDiacritics(parsed.prefix).toLowerCase() === "habito";
+}
+
+/**
+ * Nombre del checkbox en Notion: coincide con el texto; si está en la whitelist, usa la forma canónica.
+ * @param {string} raw
+ * @returns {string}
+ */
+function resolveHabitCheckboxName(raw) {
+    const s = String(raw ?? "").trim();
+    if (!s) return "";
+    if (HABIT_WHITELIST.has(s)) return s;
+    const lower = s.toLowerCase();
+    const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
+    return match || s;
+}
+
+/**
+ * Prioridad: antes de Area/ tarea. Solo prefijos habito/ y hábito/ (acentos opcionales).
+ * @returns {Promise<boolean>} true si el mensaje era comando de hábito.
+ */
+async function tryHandleHabitSlashCommand(token, chatId, text) {
+    const parsed = parseInlineSlashPrefix(text);
+    if (!isHabitSlashPrefix(parsed)) return false;
+
+    if (!parsed.content.trim()) {
+        await telegramSendMessage(token, chatId, "⚠️ Indica el hábito (ej. `habito/ Oración`).");
+        return true;
+    }
+
+    const habitName = resolveHabitCheckboxName(parsed.content);
+    let dailyResult;
+    try {
+        dailyResult = await ensureDailyHabitPage();
+    } catch (e) {
+        await telegramSendMessage(token, chatId, e.message || String(e));
+        return true;
+    }
+    if (!dailyResult?.ok || !dailyResult.page_id) {
+        await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+        return true;
+    }
+
+    const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
+    if (markResult.startsWith("❌")) {
+        await telegramSendMessage(token, chatId, markResult);
+        return true;
+    }
+
+    const habitsLink = getHabitsDatabaseNotionUrl();
+    let msg = `✅ Hábito ${habitName} registrado en la base de hábitos.`;
+    if (habitsLink) msg += `\n${habitsLink}`;
+    await telegramSendMessage(token, chatId, msg);
+    return true;
+}
+
+async function sendHabitIntentResult(token, chatId, habitName) {
+    let dailyResult;
+    try {
+        dailyResult = await ensureDailyHabitPage();
+    } catch (e) {
+        await telegramSendMessage(token, chatId, e.message || String(e));
+        return;
+    }
+    if (!dailyResult?.ok || !dailyResult.page_id) {
+        await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+        return;
+    }
+    const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
+    if (markResult.startsWith("❌")) {
+        await telegramSendMessage(token, chatId, markResult);
+        return;
+    }
+    const habitsLink = getHabitsDatabaseNotionUrl();
+    let msg = `✅ Hábito ${habitName} registrado en la base de hábitos.`;
+    if (habitsLink) msg += `\n${habitsLink}`;
+    await telegramSendMessage(token, chatId, msg);
+}
+
 function noteTitleFromNotaBody(body) {
     const line = body.split("\n")[0].trim();
     if (!line) return "Nota";
@@ -190,33 +280,6 @@ async function handleInlineSlashPrefix(token, chatId, text) {
         } else {
             await telegramSendMessage(token, chatId, `📝 Nota guardada: *${title}*`);
         }
-        return true;
-    }
-
-    if (prefixNorm === "habito") {
-        if (!content) {
-            await telegramSendMessage(token, chatId, "⚠️ Indica el hábito (ej. `habito/ Oración`).");
-            return true;
-        }
-        let habitName = content.trim();
-        if (!HABIT_WHITELIST.has(habitName)) {
-            const lower = habitName.toLowerCase();
-            const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
-            habitName = match || habitName;
-        }
-        let dailyResult;
-        try {
-            dailyResult = await ensureDailyHabitPage();
-        } catch (e) {
-            await telegramSendMessage(token, chatId, e.message || String(e));
-            return true;
-        }
-        if (!dailyResult || !dailyResult.ok || !dailyResult.page_id) {
-            await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
-            return true;
-        }
-        const habitResult = await markHabitAsDone(habitName, dailyResult.page_id);
-        await telegramSendMessage(token, chatId, habitResult);
         return true;
     }
 
@@ -365,6 +428,10 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        if (await tryHandleHabitSlashCommand(token, chatId, text)) {
+            return res.status(200).send("OK");
+        }
+
         if (await handleInlineSlashPrefix(token, chatId, text)) {
             return res.status(200).send("OK");
         }
@@ -481,24 +548,8 @@ module.exports = async function handler(req, res) {
                 await telegramSendMessage(token, chatId, "⚠️ No identifiqué el hábito.");
                 return res.status(200).send("OK");
             }
-            if (!HABIT_WHITELIST.has(habitName)) {
-                const lower = habitName.toLowerCase();
-                const match = [...HABIT_WHITELIST].find((h) => h.toLowerCase() === lower);
-                habitName = match || habitName;
-            }
-            let dailyResult;
-            try {
-                dailyResult = await ensureDailyHabitPage();
-            } catch (e) {
-                await telegramSendMessage(token, chatId, e.message || String(e));
-                return res.status(200).send("OK");
-            }
-            if (!dailyResult?.ok || !dailyResult.page_id) {
-                await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
-                return res.status(200).send("OK");
-            }
-            const habitResult = await markHabitAsDone(habitName, dailyResult.page_id);
-            await telegramSendMessage(token, chatId, habitResult);
+            habitName = resolveHabitCheckboxName(habitName);
+            await sendHabitIntentResult(token, chatId, habitName);
             return res.status(200).send("OK");
         }
 
