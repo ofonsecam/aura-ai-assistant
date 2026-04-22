@@ -37,8 +37,9 @@ const NOTION_HEADERS = {
 
 /** Locale español de chrono-node (fechas naturales: mañana, 15 de mayo, etc.). */
 const chrono = { es: require('chrono-node/es') };
-/** Referencia chrono: weekday y relativos según calendario America/Bogota. */
-const CHRONO_BOGOTA_REF = { instant: new Date(), timezone: 'America/Bogota' };
+/** Activa ForwardDateRefiner: horas al día siguiente; weekday si ya pasó la hora implícita; año si aplica. */
+const CHRONO_PARSE_OPTIONS = { forwardDate: true };
+const DAY_MS = 86400000;
 
 /** Notion limita cada fragmento de rich_text a 2000 caracteres. */
 function toRichTextSegments(text) {
@@ -80,6 +81,30 @@ function getTodayBogotaYmd() {
 function taskDateToBogotaYmd(d) {
     if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return '';
     return d.toLocaleString('sv-SE', { timeZone: 'America/Bogota' }).split(' ')[0];
+}
+
+/**
+ * Semana ISO (inicio lunes) para una fecha civil YYYY-MM-DD (gregoriano, sin zona).
+ * @param {string} ymd
+ * @returns {{ isoYear: number, week: number }}
+ */
+function isoWeekYearAndWeekForYmd(ymd) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const utc = Date.UTC(y, m - 1, d);
+    const date = new Date(utc);
+    const dayNum = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+    const isoYear = date.getUTCFullYear();
+    const yearStart = Date.UTC(isoYear, 0, 1);
+    const week = Math.ceil((((date - yearStart) / DAY_MS) + 1) / 7);
+    return { isoYear, week };
+}
+
+/** @param {string} ymdA @param {string} ymdB */
+function sameIsoWeekYmd(ymdA, ymdB) {
+    const a = isoWeekYearAndWeekForYmd(ymdA);
+    const b = isoWeekYearAndWeekForYmd(ymdB);
+    return a.isoYear === b.isoYear && a.week === b.week;
 }
 
 /**
@@ -428,7 +453,9 @@ function stripEdgeDateConnectors(s) {
 }
 
 /**
- * Detecta la primera fecha en español dentro del texto con chrono (`chrono.es.parseDate`).
+ * Detecta la primera fecha en español con chrono (`parseDate` / `parse`, ref. Bogotá y `forwardDate: true`).
+ * Ajustes: (1) día de semana sin "este/esta" que cae en hoy Bogotá → +7 días; (2) "próximo" con fecha
+ * aún en la misma semana ISO que hoy → +7 días (p. ej. domingo → el lunes inmediato pasa a lunes siguiente).
  * @param {string} text
  * @returns {{ cleanTitle: string, taskDate: Date | null }}
  */
@@ -437,14 +464,37 @@ function parseTaskText(text) {
     if (!trimmed) {
         return { cleanTitle: '', taskDate: null };
     }
-    const taskDate = chrono.es.parseDate(trimmed, CHRONO_BOGOTA_REF) ?? null;
-    if (!taskDate) {
+    const chronoBogotaRef = { instant: new Date(), timezone: 'America/Bogota' };
+    if (chrono.es.parseDate(trimmed, chronoBogotaRef, CHRONO_PARSE_OPTIONS) == null) {
         return { cleanTitle: trimmed, taskDate: null };
     }
-    const results = chrono.es.parse(trimmed, CHRONO_BOGOTA_REF);
+    const results = chrono.es.parse(trimmed, chronoBogotaRef, CHRONO_PARSE_OPTIONS);
     const first = results[0];
     if (!first) {
-        return { cleanTitle: trimmed, taskDate };
+        return { cleanTitle: trimmed, taskDate: null };
+    }
+    let taskDate = first.date();
+    if (/\b(este|esta)\b/i.test(first.text) && first.start.isOnlyWeekdayComponent()) {
+        const wd = first.start.get('weekday');
+        if (wd != null) {
+            const { weekStart } = getBogotaCurrentWeekMondaySundayYmd();
+            const daysFromMonday = (wd + 6) % 7;
+            const ymd = addCalendarDaysYmd(weekStart, daysFromMonday);
+            taskDate = new Date(`${ymd}T12:00:00-05:00`);
+        }
+    }
+    const todayYmd = getTodayBogotaYmd();
+    let taskYmd = taskDateToBogotaYmd(taskDate);
+    if (
+        first.start.isOnlyWeekdayComponent() &&
+        taskYmd === todayYmd &&
+        !/\b(este|esta)\b/i.test(first.text)
+    ) {
+        taskDate = new Date(taskDate.getTime() + 7 * DAY_MS);
+        taskYmd = taskDateToBogotaYmd(taskDate);
+    }
+    if (/\bpr[oó]ximo\b|\bproximo\b/i.test(first.text) && sameIsoWeekYmd(todayYmd, taskYmd)) {
+        taskDate = new Date(taskDate.getTime() + 7 * DAY_MS);
     }
     const before = trimmed.slice(0, first.index);
     const after = trimmed.slice(first.index + first.text.length);
