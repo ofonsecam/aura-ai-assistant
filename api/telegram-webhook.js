@@ -111,18 +111,128 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null, pars
     });
 }
 
-// --- BOTONES FIX: el botón 🚀/Pausar envía pause_task en vez de doing ---
+async function telegramEditMessageText(token, chatId, messageId, text, replyMarkup = null, parseMode = "Markdown") {
+    const body = { chat_id: chatId, message_id: messageId, text, parse_mode: parseMode };
+    if (replyMarkup) body.reply_markup = replyMarkup;
+    await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+}
+
+async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", showAlert = false) {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            callback_query_id: callbackQueryId,
+            text: text.slice(0, 200),
+            show_alert: showAlert,
+        }),
+    });
+}
+
+/** Tareas por página en el teclado/lista; más de esto activa fila de paginación. */
+const TASKS_PAGE_SIZE = 8;
+
+/**
+ * @param {number} page Página 0-based solicitada.
+ * @param {number} totalTasks
+ * @param {number} pageSize
+ */
+function clampTaskListPage(page, totalTasks, pageSize) {
+    if (totalTasks <= 0) return { page: 0, totalPages: 1 };
+    const totalPages = Math.ceil(totalTasks / pageSize);
+    const p = Math.max(0, Math.min(Number(page) || 0, totalPages - 1));
+    return { page: p, totalPages };
+}
+
+/**
+ * Texto de lista alineado con la página visible (numeración global 1…N).
+ * @param {{ id: string, name: string, status: string, area: string }[]} tasks
+ */
+function buildPendingTasksListMarkdown(tasks, page, pageSize = TASKS_PAGE_SIZE) {
+    if (!tasks.length) return "🔍 Sin pendientes.";
+    const { page: p, totalPages } = clampTaskListPage(page, tasks.length, pageSize);
+    const start = p * pageSize;
+    const slice = tasks.slice(start, start + pageSize);
+    const lines = slice.map(
+        (t, i) => `${start + i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`
+    );
+    let header = "📋 Tus tareas";
+    if (tasks.length > pageSize) {
+        header += ` _(página ${p + 1}/${totalPages})_`;
+    }
+    return `${header}:\n${lines.join("\n")}`;
+}
+
+/**
+ * Empaqueta filtro de área en callback_data (sin `:` en el valor; Notion usa nombres fijos).
+ */
+function packTaskPageNavCallback(direction, fromPage, filterArea) {
+    const p = String(fromPage);
+    const f = String(filterArea || "").trim();
+    const prefix = direction === "prev" ? "tpr" : "tnx";
+    if (!f) return `${prefix}:${p}`;
+    return `${prefix}:${p}:${f}`;
+}
+
+/**
+ * @param {{ id: string, name: string, status: string, area: string }[]} tasks
+ */
+function buildPendingTasksKeyboard(tasks, page, filterArea = "", pageSize = TASKS_PAGE_SIZE) {
+    if (!tasks.length) return { inline_keyboard: [] };
+    const { page: p, totalPages } = clampTaskListPage(page, tasks.length, pageSize);
+    const start = p * pageSize;
+    const slice = tasks.slice(start, start + pageSize);
+    const f = String(filterArea || "").trim();
+
+    const rows = slice.map((t, i) => {
+        const n = start + i + 1;
+        return [
+            { text: `✅ ${n}`, callback_data: `done:${t.id}` },
+            { text: `🔵 ${n}`, callback_data: `doing_blue:${t.id}` },
+            { text: `🚀 ${n}`, callback_data: `pause_task:${t.id}` },
+            { text: `🗑️ ${n}`, callback_data: `del:${t.id}` },
+        ];
+    });
+
+    if (tasks.length > pageSize) {
+        const prevData = p > 0 ? packTaskPageNavCallback("prev", p, f) : "tpx:first";
+        const nextData = p < totalPages - 1 ? packTaskPageNavCallback("next", p, f) : "tpx:last";
+        rows.push([
+            { text: "⬅️ Anterior", callback_data: prevData },
+            { text: `Página ${p + 1}/${totalPages}`, callback_data: `tpi:${p}:${totalPages}` },
+            { text: "Siguiente ➡️", callback_data: nextData },
+        ]);
+    }
+
+    return { inline_keyboard: rows };
+}
+
+/**
+ * @param {{ editMessageId?: number, callbackQueryId?: string }} [opts]
+ */
+async function renderPendingTaskList(token, chatId, filterArea = "", page = 0, opts = {}) {
+    const { tasks } = await readNotionTasks(filterArea || "", "");
+    const { page: p } = clampTaskListPage(page, tasks.length, TASKS_PAGE_SIZE);
+    const listText = buildPendingTasksListMarkdown(tasks, p, TASKS_PAGE_SIZE);
+    const keyboard = buildPendingTasksKeyboard(tasks, p, filterArea, TASKS_PAGE_SIZE);
+
+    if (opts.editMessageId != null) {
+        await telegramEditMessageText(token, chatId, opts.editMessageId, listText, keyboard);
+    } else {
+        await telegramSendMessage(token, chatId, listText, keyboard);
+    }
+
+    if (opts.callbackQueryId) {
+        await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
+    }
+}
+
 async function sendPendingTaskList(token, chatId, filterArea = "") {
-    const { text: listText, tasks } = await readNotionTasks(filterArea || "", "");
-    const keyboard = {
-        inline_keyboard: tasks.slice(0, 10).map((t, i) => [
-            { text: `✅ ${i + 1}`, callback_data: `done:${t.id}` },
-            { text: `🔵 ${i + 1}`, callback_data: `doing_blue:${t.id}` },
-            { text: `🚀 ${i + 1}`, callback_data: `pause_task:${t.id}` }, // CAMBIO AQUÍ
-            { text: `🗑️ ${i + 1}`, callback_data: `del:${t.id}` },
-        ]),
-    };
-    await telegramSendMessage(token, chatId, listText, keyboard);
+    await renderPendingTaskList(token, chatId, filterArea, 0);
 }
 /**
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
@@ -348,7 +458,49 @@ module.exports = async function handler(req, res) {
     const cb = req.body?.callback_query;
 
     if (cb) {
-        const [action, pageId] = cb.data.split(":");
+        const cbData = cb.data || "";
+
+        if (cbData === "tpx:first") {
+            await telegramAnswerCallbackQuery(token, cb.id, "Ya estás en la primera página.");
+            return res.status(200).send("OK");
+        }
+        if (cbData === "tpx:last") {
+            await telegramAnswerCallbackQuery(token, cb.id, "Ya estás en la última página.");
+            return res.status(200).send("OK");
+        }
+
+        if (cbData.startsWith("tpi:")) {
+            const parts = cbData.split(":");
+            const cur = parseInt(parts[1], 10);
+            const tot = parseInt(parts[2], 10);
+            const humanCur = Number.isFinite(cur) ? cur + 1 : 1;
+            const humanTot = Number.isFinite(tot) ? tot : 1;
+            await telegramAnswerCallbackQuery(token, cb.id, `Página ${humanCur} de ${humanTot}`);
+            return res.status(200).send("OK");
+        }
+
+        if (cbData.startsWith("tpr:") || cbData.startsWith("tnx:")) {
+            const isPrev = cbData.startsWith("tpr:");
+            const rest = cbData.slice(4);
+            const idx = rest.indexOf(":");
+            const fromPage = parseInt(idx === -1 ? rest : rest.slice(0, idx), 10);
+            const filter = idx === -1 ? "" : rest.slice(idx + 1);
+            const { tasks } = await readNotionTasks(filter, "");
+            const { totalPages } = clampTaskListPage(0, tasks.length, TASKS_PAGE_SIZE);
+            if (!Number.isFinite(fromPage)) {
+                await telegramAnswerCallbackQuery(token, cb.id, "No se pudo cambiar de página.");
+                return res.status(200).send("OK");
+            }
+            const targetPage = isPrev ? fromPage - 1 : fromPage + 1;
+            const { page: safePage } = clampTaskListPage(targetPage, tasks.length, TASKS_PAGE_SIZE);
+            await renderPendingTaskList(token, cb.message.chat.id, filter, safePage, {
+                editMessageId: cb.message.message_id,
+                callbackQueryId: cb.id,
+            });
+            return res.status(200).send("OK");
+        }
+
+        const [action, pageId] = cbData.split(":");
         if (action === "del") {
             const reply = await deleteNotionTask(pageId, true);
             await telegramSendMessage(token, cb.message.chat.id, reply);

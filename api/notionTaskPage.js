@@ -11,11 +11,14 @@ const PROP_TASK_FECHA = 'Fecha';
 const PROP_TASK_AREA = 'Area';
 /** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
 const TASK_STATUS_PENDING = 'Pendiente';
+const TASK_STATUS_PAUSED = 'Pausado';
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 /** Base de hábitos: prioridad NOTION_HABITS_ID (Vercel), alias NOTION_HABITS_DATABASE_ID. */
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
+/** Propiedad tipo fecha en la base Inbox Gastos (`NOTION_EXPENSES_ID`). Debe coincidir con el nombre en Notion. */
+const PROP_EXPENSE_FECHA = 'Fecha de gasto';
 const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
 const notionActividadesProyectosId = (process.env.NOTION_ACTIVIDADES_PROYECTOS_ID || '').trim();
 const notionToken = (process.env.NOTION_TOKEN || '').trim();
@@ -58,6 +61,59 @@ function getLevenshteinDistance(a, b) {
 function getTodayBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Partes de calendario (año, mes, día) de "ahora" en America/Bogota.
+ * Equivalente en Python: `datetime.now(ZoneInfo("America/Bogota")).date()`.
+ */
+function getBogotaCalendarTodayParts() {
+    const f = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+    });
+    const parts = f.formatToParts(new Date());
+    const y = Number(parts.find((p) => p.type === "year").value);
+    const m = Number(parts.find((p) => p.type === "month").value);
+    const d = Number(parts.find((p) => p.type === "day").value);
+    return { y, m, d };
+}
+
+/**
+ * Rango YYYY-MM-DD del lunes al domingo de la semana que contiene hoy (Bogotá).
+ * Alineado con ISO: semana empieza en lunes (como `date.weekday()` en Python con lunes=0
+ * y `timedelta(days=-weekday)` para retroceder al lunes).
+ * @returns {{ weekStart: string, weekEnd: string }}
+ */
+function getBogotaCurrentWeekMondaySundayYmd() {
+    const { y, m, d } = getBogotaCalendarTodayParts();
+    const utcNoon = Date.UTC(y, m - 1, d, 12, 0, 0);
+    const dow = new Date(utcNoon).getUTCDay();
+    const daysFromMonday = (dow + 6) % 7;
+    const mondayMs = utcNoon - daysFromMonday * 86400000;
+    const sundayMs = mondayMs + 6 * 86400000;
+    const toYmd = (ms) => {
+        const dt = new Date(ms);
+        const yy = dt.getUTCFullYear();
+        const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(dt.getUTCDate()).padStart(2, "0");
+        return `${yy}-${mm}-${dd}`;
+    };
+    return { weekStart: toYmd(mondayMs), weekEnd: toYmd(sundayMs) };
+}
+
+/**
+ * Fecha programada de la propiedad Fecha (inicio; si no hay, fin del rango).
+ * @returns {string | null} YYYY-MM-DD
+ */
+function getTaskScheduledYmdFromPage(page) {
+    const dateObj = page.properties?.[PROP_TASK_FECHA]?.date;
+    if (!dateObj) return null;
+    const raw = dateObj.start || dateObj.end;
+    if (!raw) return null;
+    return String(raw).slice(0, 10);
 }
 
 /**
@@ -205,12 +261,23 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
 
 async function readNotionTasks(filterArea, filterDate) {
     const areaFilter = filterArea ? normalizeNotionArea(String(filterArea).trim()) : '';
+    const { weekStart, weekEnd } = getBogotaCurrentWeekMondaySundayYmd();
+
+    /** Pausadas: solo si Fecha cae en la semana actual (lunes–domingo, Bogotá). */
+    const pausedThisWeek = {
+        and: [
+            { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } },
+            { property: PROP_TASK_FECHA, date: { on_or_after: weekStart } },
+            { property: PROP_TASK_FECHA, date: { on_or_before: weekEnd } },
+        ],
+    };
+
     const statusFilter = {
         or: [
             { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
             { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
-            { property: PROP_TASK_ESTADO, select: { equals: 'Pausado' } }
-        ]
+            pausedThisWeek,
+        ],
     };
     const filters = [statusFilter];
     if (areaFilter) filters.push({ property: PROP_TASK_AREA, select: { equals: areaFilter } });
@@ -227,7 +294,17 @@ async function readNotionTasks(filterArea, filterDate) {
     
     if (!data.results?.length) return { text: '🔍 Sin pendientes.', tasks: [] };
 
-    const tasks = data.results.map((p) => ({
+    const resultsFiltered = data.results.filter((p) => {
+        const st = p.properties?.[PROP_TASK_ESTADO]?.select?.name;
+        if (st !== TASK_STATUS_PAUSED) return true;
+        const ymd = getTaskScheduledYmdFromPage(p);
+        if (!ymd) return false;
+        return ymd >= weekStart && ymd <= weekEnd;
+    });
+
+    if (!resultsFiltered.length) return { text: '🔍 Sin pendientes.', tasks: [] };
+
+    const tasks = resultsFiltered.map((p) => ({
         id: p.id,
         name: p.properties[PROP_TASK_NAME]?.title[0]?.text?.content || 'Sin título',
         status: p.properties[PROP_TASK_ESTADO]?.select?.name || '---',
@@ -354,6 +431,7 @@ function parseExpenseAmount(amount) {
 
 /**
  * Registra un gasto en la base Inbox Gastos (NOTION_EXPENSES_ID).
+ * Propiedades: Name (title), Monto (number), Fecha de gasto (date).
  * @param {number|string} amount
  * @param {string} description
  */
@@ -376,7 +454,7 @@ async function createNotionExpensePage(amount, description) {
     const properties = {
         Name: { title: [{ text: { content: name } }] },
         Monto: { number: monto },
-        Fecha: { date: { start: fecha } }
+        [PROP_EXPENSE_FECHA]: { date: { start: fecha } },
     };
     const res = await fetch('https://api.notion.com/v1/pages', {
         method: 'POST',
