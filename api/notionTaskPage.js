@@ -3,12 +3,14 @@ const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 const TASKS_DATABASE_DISPLAY_NAME = (process.env.NOTION_TASKS_DATABASE_NAME || 'Base de tareas').trim();
 /**
  * Esquema de la base de tareas (solo estas claves en creación/lectura de tareas).
- * Título: Name; fecha: Fecha (date YYYY-MM-DD); Area; Estado.
+ * Título: Name; fecha: Fecha (date YYYY-MM-DD); Area; Estado; Fecha de Cierre (date+hora al completar).
  */
 const PROP_TASK_NAME = 'Name';
 const PROP_TASK_ESTADO = 'Estado';
 const PROP_TASK_FECHA = 'Fecha';
 const PROP_TASK_AREA = 'Area';
+/** Fecha y hora en que la tarea pasó a un estado completado (rellenada por el bot). */
+const PROP_TASK_FECHA_CIERRE = 'Fecha de Cierre';
 /** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
 const TASK_STATUS_PENDING = 'Pendiente';
 const TASK_STATUS_PAUSED = 'Pausado';
@@ -63,6 +65,22 @@ function getLevenshteinDistance(a, b) {
 function getTodayBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Marca de tiempo actual en Bogotá (GMT-5) para propiedad date de Notion con hora.
+ * @returns {string} p. ej. 2026-04-21T20:30:45.000-05:00
+ */
+function getNowBogotaIsoForNotionDateTime() {
+    const d = new Date();
+    const wall = d.toLocaleString("sv-SE", { timeZone: "America/Bogota" });
+    const [datePart, timePart = "00:00:00"] = wall.split(" ");
+    return `${datePart}T${timePart}.000-05:00`;
+}
+
+/** @param {string} status */
+function isTaskStatusCompleted(status) {
+    return TASK_STATUS_DONE_VALUES.includes(String(status || "").trim());
 }
 
 /**
@@ -132,19 +150,21 @@ function instantToBogotaYmd(iso) {
 }
 
 /**
- * Inicio y fin del día civil `ymd` en Bogotá (GMT-5 fijo) como ISO UTC para filtros Notion.
- * @param {string} ymd YYYY-MM-DD
- * @returns {{ startIso: string, endIso: string }}
+ * Día civil en Bogotá (YYYY-MM-DD) de la propiedad Fecha de Cierre.
+ * @returns {string | null}
  */
-function bogotaYmdToLastEditedBoundsIso(ymd) {
-    const start = new Date(`${ymd}T00:00:00.000-05:00`);
-    const end = new Date(`${ymd}T23:59:59.999-05:00`);
-    return { startIso: start.toISOString(), endIso: end.toISOString() };
+function getTaskCierreYmdFromPage(page) {
+    const dateObj = page.properties?.[PROP_TASK_FECHA_CIERRE]?.date;
+    if (!dateObj) return null;
+    const raw = dateObj.start || dateObj.end;
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    return instantToBogotaYmd(s);
 }
 
 /**
- * Tareas con estado completado cuya última edición en Notion cayó en el día `ymd` (Bogotá).
- * Incluye alias Hecho / Done / Cumplida en la propiedad Estado.
+ * Tareas completadas (Hecho / Done / Cumplida) cuya *Fecha de Cierre* cae en el día `ymd` (Bogotá).
  * @param {string} ymd YYYY-MM-DD (zona America/Bogota)
  * @returns {Promise<{ name: string, area: string, status: string }[]>}
  */
@@ -153,25 +173,21 @@ async function getCompletedTasksForBogotaDate(ymd) {
         property: PROP_TASK_ESTADO,
         select: { equals: name },
     }));
-    const { startIso, endIso } = bogotaYmdToLastEditedBoundsIso(ymd);
     const filter = {
         and: [
             { or: statusOr },
             {
-                timestamp: 'last_edited_time',
-                last_edited_time: {
-                    on_or_after: startIso,
-                    on_or_before: endIso,
+                property: PROP_TASK_FECHA_CIERRE,
+                date: {
+                    on_or_after: ymd,
+                    on_or_before: ymd,
                 },
             },
         ],
     };
     const pages = await queryTaskDatabaseAll(filter);
     return pages
-        .filter((p) => {
-            if (!p.last_edited_time) return false;
-            return instantToBogotaYmd(p.last_edited_time) === ymd;
-        })
+        .filter((p) => getTaskCierreYmdFromPage(p) === ymd)
         .map((p) => ({
             name: p.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content?.trim() || 'Sin título',
             area: p.properties?.[PROP_TASK_AREA]?.select?.name || '—',
@@ -226,7 +242,7 @@ async function queryTaskDatabaseAll(filter) {
 /**
  * Datos para el cron semanal (cierre de semana en America/Bogota).
  * - Pasado: Pausado con Fecha estrictamente anterior al lunes de la semana que termina.
- * - Logros: tareas en Hecho cuya última edición en Notion cayó en esa semana (lunes–domingo).
+ * - Logros: tareas completadas cuya *Fecha de Cierre* cae en esa semana (lunes–domingo, Bogotá).
  * - Vista previa: Pausado con Fecha desde el próximo lunes en adelante.
  * @returns {Promise<{ pastPaused: { name: string, area: string, ymd: string }[], previewPaused: { name: string, area: string, ymd: string }[], hechoThisWeek: number, weekStart: string, weekEnd: string, nextMonday: string }>}
  */
@@ -248,15 +264,25 @@ async function getWeeklyCronReportData() {
         ],
     });
 
-    const hechoPages = await queryTaskDatabaseAll({
+    const doneStatusOr = TASK_STATUS_DONE_VALUES.map((name) => ({
         property: PROP_TASK_ESTADO,
-        select: { equals: "Hecho" },
+        select: { equals: name },
+    }));
+    const completedThisWeekPages = await queryTaskDatabaseAll({
+        and: [
+            { or: doneStatusOr },
+            {
+                property: PROP_TASK_FECHA_CIERRE,
+                date: {
+                    on_or_after: weekStart,
+                    on_or_before: weekEnd,
+                },
+            },
+        ],
     });
-    const hechoThisWeek = hechoPages.filter((p) => {
-        const iso = p.last_edited_time;
-        if (!iso) return false;
-        const ymd = instantToBogotaYmd(iso);
-        return ymd >= weekStart && ymd <= weekEnd;
+    const hechoThisWeek = completedThisWeekPages.filter((p) => {
+        const ymd = getTaskCierreYmdFromPage(p);
+        return ymd && ymd >= weekStart && ymd <= weekEnd;
     }).length;
 
     const mapPaused = (p) => {
@@ -430,10 +456,21 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
         taskName = match.name;
     }
 
+    const properties = {
+        [PROP_TASK_ESTADO]: { select: { name: newStatus } },
+    };
+    if (isTaskStatusCompleted(newStatus)) {
+        properties[PROP_TASK_FECHA_CIERRE] = {
+            date: { start: getNowBogotaIsoForNotionDateTime() },
+        };
+    } else {
+        properties[PROP_TASK_FECHA_CIERRE] = { date: null };
+    }
+
     const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
         method: 'PATCH',
         headers: NOTION_HEADERS,
-        body: JSON.stringify({ properties: { [PROP_TASK_ESTADO]: { select: { name: newStatus } } } })
+        body: JSON.stringify({ properties }),
     });
     if (!res.ok) {
         return { ok: false, text: '❌ Error al actualizar.' };

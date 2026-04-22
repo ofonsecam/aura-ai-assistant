@@ -55,7 +55,7 @@ export default async function handler(req, res) {
             "",
             "*Logros de la semana*",
             "",
-            "_Tareas en estado Hecho con última edición en Notion en esta semana._",
+            "_Completadas en esta semana según la propiedad Fecha de Cierre (Hecho, Done o Cumplida), con día civil en Bogotá. Recuento preciso, no por última edición._",
             "",
             `*Total:* ${data.hechoThisWeek} tarea(s)`,
             "",

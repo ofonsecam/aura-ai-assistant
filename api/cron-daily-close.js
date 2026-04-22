@@ -1,5 +1,6 @@
 /**
- * Cierre de día (20:30 America/Bogota): tareas pasadas a Hecho/Done/Cumplida con última edición hoy.
+ * Cierre de día (20:30 America/Bogota): tareas con *Fecha de Cierre* en el día actual (Bogotá).
+ * Recuento preciso según la propiedad Notion, no last_edited_time.
  * Vercel cron: 01:30 UTC diario (= 20:30 del día anterior en Bogotá, mismo instante civil).
  */
 const { getCompletedTasksTodayBogota } = require("./notionTaskPage");
@@ -20,7 +21,7 @@ export default async function handler(req, res) {
             text = [
                 "🌙 *Cierre de día*",
                 "",
-                `Hoy (\`${dateYmd}\`, Bogotá) no registramos tareas completadas en Notion.`,
+                `Hoy (\`${dateYmd}\`, Bogotá) no hay tareas con *Fecha de Cierre* en este día (Hecho/Done/Cumplida vía bot o con esa fecha rellenada).`,
                 "",
                 "Descansa bien: un día sin tachar ítems también cuenta. Mañana puedes ordenar 2–3 prioridades y retomar el ritmo con calma. 🌿",
             ].join("\n");
@@ -34,7 +35,7 @@ export default async function handler(req, res) {
             text = [
                 "🌙 *Cierre de día*",
                 "",
-                `Esto es lo que cerraste hoy (\`${dateYmd}\`, Bogotá):`,
+                `Cierres reales hoy (\`${dateYmd}\`, Bogotá) según *Fecha de Cierre*:`,
                 "",
                 list,
                 "",
