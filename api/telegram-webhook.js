@@ -13,6 +13,8 @@ const {
     deleteNotionTask,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
+    parseTaskText,
+    taskDateToBogotaYmd,
 } = require("./notionTaskPage");
 
 const SYSTEM_INSTRUCTION = `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
@@ -20,7 +22,7 @@ const SYSTEM_INSTRUCTION = `Eres el router de Aura AI. Analiza el mensaje del us
 
 Reglas de clasificación:
 - TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha.
-  data debe incluir: "Name" (string, título claro), "Area" (una de: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; se guarda en Notion en la propiedad Fecha).
+  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
 - HABIT: el usuario indica que completó o marcó un hábito del día (ej. oración, escrituras).
@@ -68,6 +70,20 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.`;
  * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string } | { ok: false, error: string }} result
  * @returns {{ text: string, parseMode: string }}
  */
+/**
+ * Separa fecha en español (chrono, ref. America/Bogota) del título. Si no hay fecha, fechaYmd es "" y Notion usa hoy.
+ * @param {string} rawTitle
+ * @returns {{ name: string, fechaYmd: string }}
+ */
+function splitTaskTitleForNotion(rawTitle) {
+    const trimmed = String(rawTitle ?? "").trim();
+    if (!trimmed) return { name: "", fechaYmd: "" };
+    const { cleanTitle, taskDate } = parseTaskText(trimmed);
+    const name = String(cleanTitle ?? "").trim() || trimmed;
+    const fechaYmd = taskDate ? taskDateToBogotaYmd(taskDate) : "";
+    return { name, fechaYmd };
+}
+
 function formatTaskSavedTelegramReply(result) {
     if (!result || result.ok === false) {
         return {
@@ -420,7 +436,8 @@ async function handleInlineSlashPrefix(token, chatId, text) {
         return true;
     }
 
-    const taskResult = await createNotionTaskPage({ Name: content, Area: prefix });
+    const { name: taskName, fechaYmd } = splitTaskTitleForNotion(content);
+    const taskResult = await createNotionTaskPage({ Name: taskName, Area: prefix, Fecha: fechaYmd });
     const taskReply = formatTaskSavedTelegramReply(taskResult);
     await telegramSendMessage(token, chatId, taskReply.text, null, taskReply.parseMode);
     return true;
@@ -603,7 +620,12 @@ module.exports = async function handler(req, res) {
                 );
                 return res.status(200).send("OK");
             }
-            const plusResult = await createNotionTaskPage({ Name: taskName, Area: area });
+            const { name: plusName, fechaYmd: plusFechaYmd } = splitTaskTitleForNotion(taskName);
+            const plusResult = await createNotionTaskPage({
+                Name: plusName,
+                Area: area,
+                Fecha: plusFechaYmd,
+            });
             const plusReply = formatTaskSavedTelegramReply(plusResult);
             await telegramSendMessage(token, chatId, plusReply.text, null, plusReply.parseMode);
             return res.status(200).send("OK");
@@ -644,15 +666,22 @@ module.exports = async function handler(req, res) {
         const data = routed.data && typeof routed.data === "object" ? routed.data : {};
 
         if (intent === "TASK") {
-            const name = (data.Name || "").trim();
-            if (!name) {
+            const nameRaw = (data.Name || "").trim();
+            if (!nameRaw) {
                 await telegramSendMessage(token, chatId, "⚠️ No pude extraer el nombre de la tarea.");
                 return res.status(200).send("OK");
+            }
+            let { name, fechaYmd } = splitTaskTitleForNotion(nameRaw);
+            if (!fechaYmd) {
+                const gFecha = String(data.Fecha || "").trim();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(gFecha)) {
+                    fechaYmd = gFecha;
+                }
             }
             const geminiTaskResult = await createNotionTaskPage({
                 Name: name,
                 Area: data.Area || "Personales",
-                Fecha: data.Fecha || "",
+                Fecha: fechaYmd,
             });
             const geminiReply = formatTaskSavedTelegramReply(geminiTaskResult);
             await telegramSendMessage(token, chatId, geminiReply.text, null, geminiReply.parseMode);

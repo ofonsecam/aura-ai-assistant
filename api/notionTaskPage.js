@@ -35,6 +35,11 @@ const NOTION_HEADERS = {
     'Content-Type': 'application/json'
 };
 
+/** Locale español de chrono-node (fechas naturales: mañana, 15 de mayo, etc.). */
+const chrono = { es: require('chrono-node/es') };
+/** Referencia chrono: weekday y relativos según calendario America/Bogota. */
+const CHRONO_BOGOTA_REF = { instant: new Date(), timezone: 'America/Bogota' };
+
 /** Notion limita cada fragmento de rich_text a 2000 caracteres. */
 function toRichTextSegments(text) {
     const s = text == null ? '' : String(text);
@@ -65,6 +70,16 @@ function getLevenshteinDistance(a, b) {
 function getTodayBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Día de calendario YYYY-MM-DD en America/Bogota para un instante devuelto por chrono.
+ * @param {Date} d
+ * @returns {string}
+ */
+function taskDateToBogotaYmd(d) {
+    if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('sv-SE', { timeZone: 'America/Bogota' }).split(' ')[0];
 }
 
 /**
@@ -393,6 +408,49 @@ async function findBestFuzzyMatch(searchName) {
     }
     const threshold = Math.max(2, Math.floor(bestMatch.name.length * 0.4));
     return bestMatch.distance <= threshold ? bestMatch : null;
+}
+
+/**
+ * Tras quitar la fecha, elimina conectores sueltos al inicio o al final (p. ej. "... el" si chrono solo quitó "domingo").
+ * @param {string} s
+ * @returns {string}
+ */
+function stripEdgeDateConnectors(s) {
+    const lead = /^(?:para el|el día|del|el|la)\s+/i;
+    const trail = /\s+(?:para el|el día|del|el|la)$/i;
+    let t = String(s).replace(/\s+/g, ' ').trim();
+    let prev;
+    do {
+        prev = t;
+        t = t.replace(lead, '').replace(trail, '').replace(/\s+/g, ' ').trim();
+    } while (t !== prev);
+    return t;
+}
+
+/**
+ * Detecta la primera fecha en español dentro del texto con chrono (`chrono.es.parseDate`).
+ * @param {string} text
+ * @returns {{ cleanTitle: string, taskDate: Date | null }}
+ */
+function parseTaskText(text) {
+    const trimmed = text == null ? '' : String(text).trim();
+    if (!trimmed) {
+        return { cleanTitle: '', taskDate: null };
+    }
+    const taskDate = chrono.es.parseDate(trimmed, CHRONO_BOGOTA_REF) ?? null;
+    if (!taskDate) {
+        return { cleanTitle: trimmed, taskDate: null };
+    }
+    const results = chrono.es.parse(trimmed, CHRONO_BOGOTA_REF);
+    const first = results[0];
+    if (!first) {
+        return { cleanTitle: trimmed, taskDate };
+    }
+    const before = trimmed.slice(0, first.index);
+    const after = trimmed.slice(first.index + first.text.length);
+    let cleanTitle = `${before}${after}`.replace(/\s+/g, ' ').trim();
+    cleanTitle = stripEdgeDateConnectors(cleanTitle);
+    return { cleanTitle, taskDate };
 }
 
 async function createNotionTaskPage(taskData) {
@@ -1029,6 +1087,8 @@ async function markHabitAsDone(habitName, pageId) {
 
 module.exports = {
     createNotionTaskPage,
+    parseTaskText,
+    taskDateToBogotaYmd,
     createNotionNotePage,
     createNotionExpensePage,
     createNotionMinutePage,
