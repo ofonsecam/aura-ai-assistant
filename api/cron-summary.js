@@ -1,21 +1,23 @@
-const { readNotionTasks, getOverdueTasks } = require("./notionTaskPage");
+const { getDailyTasks, getWeeklyTasks, getOverdueTasks } = require("./notionTaskPage");
 
 export default async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
     try {
-        // CORRECCIÓN: Desestructuramos para obtener solo el texto del objeto
-        const { text: tasksText } = await readNotionTasks("", "");
         const overdue = await getOverdueTasks();
         
         const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Bogota"}));
         const hour = now.getHours();
+        const isDailySlot = [7, 10, 13].includes(hour);
+        const isWeeklySlot = [16, 20].includes(hour);
+        const { text: tasksText } = isWeeklySlot ? await getWeeklyTasks() : await getDailyTasks();
 
         let greeting;
-        if (hour < 10) greeting = "🌅 ¡Buenos días, Oscar! Comienza tu jornada con estos pendientes:";
-        else if (hour < 15) greeting = "🍱 Control de mediodía. Así va tu lista de tareas:";
-        else greeting = "🌆 Cierre de tarde. Esto es lo que quedó pendiente:";
+        if (isDailySlot && hour === 7) greeting = "🌅 ¡Buenos días, Don Eduardo!! Estas son tus tareas de hoy:";
+        else if (isDailySlot) greeting = "🍱 Control diario. Estas son tus tareas del día:";
+        else if (isWeeklySlot) greeting = "🗓️ Enfoque semanal. Estas son tus tareas de esta semana:";
+        else greeting = "📋 Resumen programado. Aquí está tu lista actual:";
         
         // Usamos tasksText que contiene el string numerado
         let message = `${greeting}\n\n${tasksText}`;

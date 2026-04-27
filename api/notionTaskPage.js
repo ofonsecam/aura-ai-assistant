@@ -652,6 +652,77 @@ async function readNotionTasks(filterArea, filterDate) {
     return { text, tasks };
 }
 
+/**
+ * Normaliza una página Notion al formato de tarea para resúmenes de Telegram.
+ * @param {any} p
+ * @returns {{ id: string, name: string, status: string, area: string }}
+ */
+function mapTaskPageToSummaryTask(p) {
+    return {
+        id: p.id,
+        name: p.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content || 'Sin título',
+        status: p.properties?.[PROP_TASK_ESTADO]?.select?.name || '---',
+        area: p.properties?.[PROP_TASK_AREA]?.select?.name || '---'
+    };
+}
+
+/**
+ * Formatea la lista de tareas para Telegram.
+ * @param {{ id: string, name: string, status: string, area: string }[]} tasks
+ * @returns {string}
+ */
+function formatSummaryTasksText(tasks) {
+    if (!tasks.length) return '🔍 Sin pendientes.';
+    return '📋 Tus tareas:\n' + tasks.map((t, i) => `${i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`).join('\n');
+}
+
+/**
+ * Consulta tareas cuya propiedad Fecha coincide exactamente con hoy (Bogotá).
+ * Incluye estados activos: Pendiente, Haciendo y Pausado.
+ * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string }[], dateYmd: string }>}
+ */
+async function getDailyTasks() {
+    const dateYmd = getTodayBogotaYmd();
+    const pages = await queryTaskDatabaseAll({
+        and: [
+            {
+                or: [
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } }
+                ]
+            },
+            { property: PROP_TASK_FECHA, date: { equals: dateYmd } }
+        ]
+    });
+    const tasks = pages.map(mapTaskPageToSummaryTask);
+    return { text: formatSummaryTasksText(tasks), tasks, dateYmd };
+}
+
+/**
+ * Consulta tareas cuya propiedad Fecha está dentro de la semana en curso (Bogotá, lunes-domingo).
+ * Incluye estados activos: Pendiente, Haciendo y Pausado.
+ * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string }[], weekStart: string, weekEnd: string }>}
+ */
+async function getWeeklyTasks() {
+    const { weekStart, weekEnd } = getBogotaCurrentWeekMondaySundayYmd();
+    const pages = await queryTaskDatabaseAll({
+        and: [
+            {
+                or: [
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } }
+                ]
+            },
+            { property: PROP_TASK_FECHA, date: { on_or_after: weekStart } },
+            { property: PROP_TASK_FECHA, date: { on_or_before: weekEnd } }
+        ]
+    });
+    const tasks = pages.map(mapTaskPageToSummaryTask);
+    return { text: formatSummaryTasksText(tasks), tasks, weekStart, weekEnd };
+}
+
 async function deleteNotionTask(searchNameOrId, isId = false) {
     let pageId = isId ? searchNameOrId : null;
     if (!isId) {
@@ -1148,6 +1219,8 @@ module.exports = {
     normalizeNotionArea,
     updateNotionTaskStatus,
     readNotionTasks,
+    getDailyTasks,
+    getWeeklyTasks,
     deleteNotionTask,
     getOverdueTasks,
     getWeeklyCronReportData,
