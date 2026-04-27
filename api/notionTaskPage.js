@@ -738,6 +738,55 @@ async function deleteNotionTask(searchNameOrId, isId = false) {
     return res.ok ? `🗑️ Tarea eliminada correctamente.` : `❌ Error al eliminar.`;
 }
 
+/**
+ * Reprograma la propiedad Fecha de una tarea por page_id usando texto natural en español.
+ * El parseo usa la configuración actual de chrono.es (Bogotá, forwardDate).
+ * @param {string} pageId
+ * @param {string} naturalDateText
+ * @returns {Promise<{ ok: true, dateYmd: string } | { ok: false, error: string }>}
+ */
+async function rescheduleTaskDateByPageId(pageId, naturalDateText) {
+    const id = String(pageId || "").trim();
+    if (!id) {
+        return { ok: false, error: "❌ page_id inválido para reprogramar." };
+    }
+    const text = String(naturalDateText || "").trim();
+    if (!text) {
+        return { ok: false, error: "❌ Escribe una fecha válida (ej. `para el próximo viernes`)." };
+    }
+    const { taskDate } = parseTaskText(text);
+    if (!taskDate) {
+        return { ok: false, error: "❌ No pude interpretar la fecha. Intenta con un formato como `próximo viernes`." };
+    }
+    const dateYmd = taskDateToBogotaYmd(taskDate);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
+        return { ok: false, error: "❌ Fecha inválida tras el parseo." };
+    }
+
+    const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+        method: "PATCH",
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({
+            properties: {
+                [PROP_TASK_FECHA]: { date: { start: dateYmd } },
+            },
+        }),
+    });
+
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) {
+            /* ignore */
+        }
+        return { ok: false, error: `❌ Error al reprogramar en Notion (${detail}).` };
+    }
+
+    return { ok: true, dateYmd };
+}
+
 async function getOverdueTasks() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
     const todayStr = now.toISOString().slice(0, 10);
@@ -1222,6 +1271,7 @@ module.exports = {
     getDailyTasks,
     getWeeklyTasks,
     deleteNotionTask,
+    rescheduleTaskDateByPageId,
     getOverdueTasks,
     getWeeklyCronReportData,
     getCompletedTasksTodayBogota,

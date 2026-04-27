@@ -9,6 +9,9 @@ const {
     markHabitAsDone,
     normalizeNotionArea,
     readNotionTasks,
+    getDailyTasks,
+    getWeeklyTasks,
+    rescheduleTaskDateByPageId,
     updateNotionTaskStatus,
     deleteNotionTask,
     ensureDailyHabitPage,
@@ -43,6 +46,12 @@ const helpMessage = `
 Área/ ver → Filtra pendientes
 
 /lista → Ver todos los pendientes
+
+/listad → Ver tareas del día (hoy)
+
+/listas → Ver tareas de la semana actual
+
+/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista semanal
 
 ⛪ Segunda Consejería
 
@@ -249,6 +258,18 @@ async function renderPendingTaskList(token, chatId, filterArea = "", page = 0, o
 
 async function sendPendingTaskList(token, chatId, filterArea = "") {
     await renderPendingTaskList(token, chatId, filterArea, 0);
+}
+
+/**
+ * Formato secuencial simple para comandos de lista rápida.
+ * @param {{ name: string, status: string }[]} tasks
+ * @returns {string}
+ */
+function formatSequentialTaskStatusList(tasks) {
+    if (!tasks.length) return "🔍 Sin pendientes.";
+    return tasks
+        .map((task, index) => `${index + 1}. ${task.name} - ${task.status}`)
+        .join("\n");
 }
 /**
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
@@ -590,6 +611,44 @@ module.exports = async function handler(req, res) {
         if (text.startsWith("/")) {
             if (text === "/lista") {
                 await sendPendingTaskList(token, chatId);
+                return res.status(200).send("OK");
+            }
+            const reprogramaMatch = text.match(/^\/reprograma\s+(\d+)\s+(.+)$/i);
+            if (reprogramaMatch) {
+                const taskIndex = Number(reprogramaMatch[1]) - 1;
+                const naturalDateText = reprogramaMatch[2].trim();
+                const { tasks } = await getWeeklyTasks();
+
+                if (taskIndex < 0 || taskIndex >= tasks.length) {
+                    await telegramSendMessage(token, chatId, `❌ Índice inválido. Usa un número entre 1 y ${tasks.length || 1}.`);
+                    return res.status(200).send("OK");
+                }
+
+                const selectedTask = tasks[taskIndex];
+                const pageId = selectedTask?.id;
+                const result = await rescheduleTaskDateByPageId(pageId, naturalDateText);
+                if (!result.ok) {
+                    await telegramSendMessage(token, chatId, result.error);
+                    return res.status(200).send("OK");
+                }
+
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    `✅ Tarea reprogramada: ${selectedTask.name}\nNueva fecha: ${result.dateYmd}`
+                );
+                return res.status(200).send("OK");
+            }
+            if (text === "/listad") {
+                const { tasks } = await getDailyTasks();
+                const messageText = `📅 Tareas de hoy:\n${formatSequentialTaskStatusList(tasks)}`;
+                await telegramSendMessage(token, chatId, messageText);
+                return res.status(200).send("OK");
+            }
+            if (text === "/listas") {
+                const { tasks } = await getWeeklyTasks();
+                const messageText = `🗓️ Tareas de esta semana:\n${formatSequentialTaskStatusList(tasks)}`;
+                await telegramSendMessage(token, chatId, messageText);
                 return res.status(200).send("OK");
             }
             await telegramSendMessage(token, chatId, "❓ Comando no reconocido. Usa /help o /lista.");
