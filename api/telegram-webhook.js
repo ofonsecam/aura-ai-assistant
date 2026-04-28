@@ -50,44 +50,37 @@ Reglas de fecha:
 - Si no puedes inferir una fecha confiable, deja "Fecha" en "" y conserva la tarea en "Name".`;
 }
 
-/** Cuerpo /help (HTML mínimo: solo el título en <b> para evitar Entity_parse_failed). */
+/** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
-<b>📖 Manual de Aura AI v2.5</b>
+__________________________________________________________________
+📖 Manual de Aura AI v2.7.6
 
 🛠 Gestión de Tareas
 
 Área/ Tarea → Crea tarea
-
 Área/ ver → Filtra pendientes
+Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 /listad → Ver tareas del día (hoy)
-
 /listas → Ver tareas de la semana actual
-
 /listam → Ver tareas del mes actual
-
 /listav → Ver tareas vencidas
 
 /reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual
 
-⛪ Segunda Consejería
+⛪️ Tareas pendientes de reuniones 
 
 /syncminutas - Sincroniza tareas pendientes desde las minutas del obispado o reuniones grabadas.
 
 📝 Notas y Hábitos
 
 Nota/ [Texto] → Envía a Inbox
-
 Habito/ [Nombre] → Marca hábito hoy
 
 💰 Finanzas
 
 $ [Monto] [Concepto] → Registro gasto
-
-🔘 Botones de Acción
-✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar
-
-Nota: Para Iglesia, usa el prefijo Iglesia/.`;
+__________________________________________________________________`;
 
 const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
 const MINUTAS_READY_PROP = "Listo para tareas";
