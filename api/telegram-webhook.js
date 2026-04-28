@@ -78,14 +78,19 @@ $ [Monto] [Concepto] → Registro gasto
 
 Nota: Para Iglesia, usa el prefijo Iglesia/.`;
 
-const MANAGE_TASK_SELECTION_PROMPT = "¿Qué número de tarea quieres gestionar mi papacho?";
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
 const interactiveTaskActionContext = new Map();
 const interactiveRescheduleContext = new Map();
+const MANAGE_TASK_PROMPTS = {
+    manage_day: "¿Qué número de la lista diaria quieres gestionar mi papacho?",
+    manage_week: "¿Qué número de la lista semanal quieres gestionar mi papacho?",
+    manage_month: "¿Qué número de la lista mensual quieres gestionar mi papacho?",
+    manage_overdue: "¿Qué número de las tareas vencidas quieres gestionar mi papacho?",
+};
 
-function buildInteractiveManageKeyboard() {
+function buildInteractiveManageKeyboard(callbackData) {
     return {
-        inline_keyboard: [[{ text: "⚙️ Gestionar Tarea", callback_data: "itask_manage_prompt" }]],
+        inline_keyboard: [[{ text: "⚙️ Gestionar Tarea", callback_data: callbackData }]],
     };
 }
 
@@ -330,6 +335,29 @@ function mapOverduePagesToTasks(overduePages) {
         status: page?.properties?.Estado?.select?.name || "---",
     }));
 }
+
+function isInteractiveManagePromptText(promptText) {
+    const t = String(promptText || "").toLowerCase();
+    return t.includes("diaria") || t.includes("semanal") || t.includes("mensual") || t.includes("vencidas");
+}
+
+async function getInteractiveTasksByPromptText(promptText) {
+    const t = String(promptText || "").toLowerCase();
+    if (t.includes("diaria")) {
+        const { tasks } = await getDailyTasks();
+        return tasks;
+    }
+    if (t.includes("semanal")) {
+        const { tasks } = await getWeeklyTasks();
+        return tasks;
+    }
+    if (t.includes("vencidas")) {
+        const overduePages = await getOverdueTasks();
+        return mapOverduePagesToTasks(overduePages);
+    }
+    const { tasks } = await getMonthTasks();
+    return tasks;
+}
 /**
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
  * @returns {null | { prefix: string, prefixNorm: string, content: string }}
@@ -557,12 +585,12 @@ module.exports = async function handler(req, res) {
     if (cb) {
         const cbData = cb.data || "";
 
-        if (cbData === "itask_manage_prompt") {
+        if (MANAGE_TASK_PROMPTS[cbData]) {
             const forceReply = { force_reply: true, selective: true };
             await telegramSendMessage(
                 token,
                 cb.message.chat.id,
-                MANAGE_TASK_SELECTION_PROMPT,
+                MANAGE_TASK_PROMPTS[cbData],
                 forceReply
             );
             await telegramAnswerCallbackQuery(token, cb.id);
@@ -719,14 +747,14 @@ module.exports = async function handler(req, res) {
         if (message.reply_to_message?.from?.is_bot) {
             const replyPrompt = String(message.reply_to_message?.text || "").trim();
 
-            if (replyPrompt === MANAGE_TASK_SELECTION_PROMPT) {
+            if (isInteractiveManagePromptText(replyPrompt)) {
                 const selectedNumber = Number(text);
                 if (!Number.isInteger(selectedNumber) || selectedNumber <= 0) {
                     await telegramSendMessage(token, chatId, "❌ Pero como? Respondame como es! Con un número válido de tarea mi rey!");
                     return res.status(200).send("OK");
                 }
 
-                const { tasks } = await getMonthTasks();
+                const tasks = await getInteractiveTasksByPromptText(replyPrompt);
                 const taskIndex = selectedNumber - 1;
                 if (taskIndex < 0 || taskIndex >= tasks.length) {
                     await telegramSendMessage(token, chatId, `❌ Índice inválido mijo. Tratame serio y use un número entre 1 y ${tasks.length || 1}.`);
@@ -832,26 +860,26 @@ module.exports = async function handler(req, res) {
             if (text === "/listad") {
                 const { tasks } = await getDailyTasks();
                 const messageText = `📅 Tareas de hoy:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_day"));
                 return res.status(200).send("OK");
             }
             if (text === "/listas") {
                 const { tasks } = await getWeeklyTasks();
                 const messageText = `🗓️ Tareas de esta semana:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_week"));
                 return res.status(200).send("OK");
             }
             if (text === "/listam") {
                 const { tasks } = await getMonthTasks();
                 const messageText = `🗓️ Tareas de este mes:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_month"));
                 return res.status(200).send("OK");
             }
             if (text === "/listav") {
                 const overduePages = await getOverdueTasks();
                 const overdueTasks = mapOverduePagesToTasks(overduePages);
                 const messageText = `⚠️ Tareas vencidas:\n${formatSequentialTaskStatusList(overdueTasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_overdue"));
                 return res.status(200).send("OK");
             }
             await telegramSendMessage(token, chatId, "❓ Comando no reconocido mijo. Pille echele gafa y use /help");
