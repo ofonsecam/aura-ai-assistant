@@ -1,7 +1,23 @@
 const fs = require("fs");
 const { formidable } = require("formidable");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createNotionTaskPage } = require("./notionTaskPage");
+
+function getBogotaReferenceTimeMmDdYy() {
+    const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    const mm = String(ref.getMonth() + 1).padStart(2, "0");
+    const dd = String(ref.getDate()).padStart(2, "0");
+    const yy = String(ref.getFullYear()).slice(-2);
+    return `${mm}-${dd}-${yy}`;
+}
+
+function parseGeminiJson(raw) {
+    const cleaned = String(raw || "")
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/```\s*$/i, "")
+        .trim();
+    return JSON.parse(cleaned);
+}
 
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") {
@@ -45,12 +61,13 @@ module.exports = async function handler(req, res) {
         return res.status(500).json({ success: false, error: "Failed to read audio file" });
     }
 
-    // Prepare Gemini client and model with JSON response config
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
-    });
+    const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+    if (!apiKey) {
+        try {
+            fs.unlinkSync(file.filepath);
+        } catch (_) {}
+        return res.status(500).json({ success: false, error: "Missing GEMINI_API_KEY" });
+    }
 
     const audioPart = {
         inlineData: {
@@ -58,6 +75,7 @@ module.exports = async function handler(req, res) {
             mimeType: file.mimetype,
         },
     };
+    const referenceTimeMmDdYy = getBogotaReferenceTimeMmDdYy();
 
     const prompt = `You are an expert task extraction assistant. Listen to the audio and output a strict, raw JSON object (no markdown, no backticks).
 
@@ -67,14 +85,38 @@ The JSON must have exactly these three keys:
 
 2. "Area": (string) Categorize the task. You MUST choose EXACTLY ONE of these options: "Trabajo secundario", "Trabajo Traffix", "Iglesia", "Familia", "Carrera", "IA Dev", "Universidad", or "Personales". If unsure, use "Personales".
 
-3. "Fecha": (string) If the audio mentions a deadline or specific day, calculate the date and output it in ISO format YYYY-MM-DD. Today's date is 2026-04-04. If no date is mentioned, return an empty string "".`
+3. "Fecha": (string) If the audio mentions a deadline or specific day, calculate the date and output it in ISO format YYYY-MM-DD.
+Use Reference Time (MM-DD-YY): ${referenceTimeMmDdYy}
+- Highest-priority numeric date rule: interpret "MM DD YY" or "MM DD YYYY" as Month-Day-Year.
+- Mandatory example: "05 08 26" means May 8, 2026.
+- Accept relative dates in Spanish like "próximo martes", "mañana", "pasado mañana".
+If no date is mentioned, return an empty string "".`
 
     let jsonResponse;
     let text = "";
     try {
-        const result = await model.generateContent([prompt, audioPart]);
-        text = (await result.response.text() || "").trim();
-        jsonResponse = JSON.parse(text);
+        const url = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent("gemini-2.5-flash")}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const body = {
+            generationConfig: { responseMimeType: "application/json" },
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }, audioPart],
+                },
+            ],
+        };
+        const result = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const data = await result.json();
+        if (!result.ok) {
+            const detail = data?.error?.message || String(result.status);
+            throw new Error(`Gemini API error: ${detail}`);
+        }
+        text = data?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim() || "";
+        jsonResponse = parseGeminiJson(text);
     } catch (err) {
         console.error("Gemini structured response error:", err);
         try {

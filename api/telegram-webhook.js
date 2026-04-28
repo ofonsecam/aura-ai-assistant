@@ -1,4 +1,3 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const {
     createNotionTaskPage,
     createNotionNotePage,
@@ -22,7 +21,16 @@ const {
     taskDateToBogotaYmd,
 } = require("./notionTaskPage");
 
-const SYSTEM_INSTRUCTION = `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
+function getBogotaReferenceTimeMmDdYy() {
+    const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    const mm = String(ref.getMonth() + 1).padStart(2, "0");
+    const dd = String(ref.getDate()).padStart(2, "0");
+    const yy = String(ref.getFullYear()).slice(-2);
+    return `${mm}-${dd}-${yy}`;
+}
+
+function buildSystemInstruction(referenceTimeMmDdYy) {
+    return `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
 {"intent": "TASK"|"NOTE"|"HABIT"|"QUERY", "data": { ... }}
 
 Reglas de clasificación:
@@ -35,7 +43,14 @@ Reglas de clasificación:
 - QUERY: el usuario pregunta qué debe hacer, qué tiene pendiente, su lista de tareas, o consulta sus pendientes sin crear nada nuevo.
   data puede ser {} o incluir campos opcionales si aclaran el filtro (no es obligatorio).
 
-Usa la fecha/hora de "Contexto temporal" para interpretar "hoy", "mañana", "pasado mañana" y rellenar Fecha en YYYY-MM-DD cuando corresponda a TASK.`;
+Reglas de fecha:
+- Usa SIEMPRE "Reference Time" como base de interpretación temporal.
+- Reference Time actual (MM-DD-YY): ${referenceTimeMmDdYy}
+- Regla de prioridad máxima para fechas numéricas: interpreta "MM DD YY" o "MM DD YYYY" como Mes-Día-Año.
+- Ejemplo obligatorio: "05 08 26" significa 8 de mayo de 2026.
+- Acepta términos relativos en español: "hoy", "mañana", "pasado mañana", "próximo martes", "este viernes".
+- Si no puedes inferir una fecha confiable, deja "Fecha" en "" y conserva la tarea en "Name".`;
+}
 
 /** Cuerpo /help (HTML mínimo: solo el título en <b> para evitar Entity_parse_failed). */
 const helpMessage = `
@@ -552,25 +567,51 @@ async function handleInlineSlashPrefix(token, chatId, text) {
 }
 
 async function routeIntentWithGemini(userText) {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const nowBogota = new Date().toLocaleString("en-US", { timeZone: "America/Bogota" });
-    const userPayload = `Contexto temporal (America/Bogota): ${nowBogota}\n\nMensaje del usuario:\n${userText}`;
+    const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+    if (!apiKey) {
+        throw new Error("Falta GEMINI_API_KEY.");
+    }
+    const nowBogotaIso = new Date().toLocaleString("sv-SE", { timeZone: "America/Bogota" }).replace(" ", "T");
+    const referenceTimeMmDdYy = getBogotaReferenceTimeMmDdYy();
+    const systemInstruction = buildSystemInstruction(referenceTimeMmDdYy);
+    const userPayload = [
+        `Reference Time (America/Bogota, MM-DD-YY): ${referenceTimeMmDdYy}`,
+        `Contexto temporal actual (America/Bogota): ${nowBogotaIso}`,
+        "",
+        "Mensaje del usuario:",
+        userText,
+    ].join("\n");
 
     const runModel = async (modelId) => {
-        const model = genAI.getGenerativeModel({
-            model: modelId,
-            systemInstruction: SYSTEM_INSTRUCTION,
+        const url = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const body = {
+            systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { responseMimeType: "application/json" },
+            contents: [{ role: "user", parts: [{ text: userPayload }] }],
+        };
+        const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
         });
-        const result = await model.generateContent(userPayload);
-        return parseGeminiJson(result.response.text());
+        const data = await res.json();
+        if (!res.ok) {
+            const errMsg = data?.error?.message || `${res.status}`;
+            throw new Error(`Gemini API (${modelId}): ${errMsg}`);
+        }
+        const outText = data?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim() || "";
+        if (!outText) {
+            throw new Error(`Gemini API (${modelId}): respuesta vacía.`);
+        }
+        return parseGeminiJson(outText);
     };
 
     try {
         return await runModel("gemini-2.5-flash");
     } catch (apiErr) {
-        if (apiErr.message && String(apiErr.message).includes("503")) {
-            return await runModel("gemini-1.5-flash");
+        const msg = String(apiErr?.message || "");
+        if (msg.includes("503") || msg.includes("404")) {
+            return await runModel("gemini-2.0-flash");
         }
         throw apiErr;
     }
@@ -783,12 +824,12 @@ module.exports = async function handler(req, res) {
                     await telegramSendMessage(token, chatId, "❌ Esta respuesta no corresponde a una reprogramación activa mi papacho, echele gafa y me comenta!");
                     return res.status(200).send("OK");
                 }
-                interactiveRescheduleContext.delete(ctxKey);
                 const result = await rescheduleTaskDateByPageId(ctx.pageId, text);
                 if (!result.ok) {
                     await telegramSendMessage(token, chatId, `${result.error} Tranqui mi rey, lo volvemos a intentar ya mismo!`);
                     return res.status(200).send("OK");
                 }
+                interactiveRescheduleContext.delete(ctxKey);
                 await telegramSendMessage(
                     token,
                     chatId,

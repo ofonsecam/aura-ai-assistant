@@ -74,6 +74,14 @@ function getTodayBogotaYmd() {
 }
 
 /**
+ * Devuelve "ahora" en America/Bogota para usar como referencia de NLP.
+ * @returns {Date}
+ */
+function getNlpReferenceDateBogota() {
+    return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+}
+
+/**
  * Día de calendario YYYY-MM-DD en America/Bogota para un instante devuelto por chrono.
  * @param {Date} d
  * @returns {string}
@@ -405,6 +413,10 @@ function resolveNaturalDate(input) {
         now.setDate(now.getDate() + 1);
         return now.toISOString().slice(0, 10);
     }
+    const parsed = parseTaskText(raw);
+    if (parsed.taskDate) {
+        return taskDateToBogotaYmd(parsed.taskDate);
+    }
     return raw;
 }
 
@@ -470,6 +482,40 @@ function stripEdgeDateConnectors(s) {
     return t;
 }
 
+function buildDateFromMonthDayYear(monthStr, dayStr, yearStr) {
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    const year = yearStr.length === 2 ? 2000 + Number(yearStr) : Number(yearStr);
+    if (!Number.isInteger(month) || !Number.isInteger(day) || !Number.isInteger(year)) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const d = new Date(Date.UTC(year, month - 1, day, 17, 0, 0));
+    if (
+        d.getUTCFullYear() !== year ||
+        d.getUTCMonth() + 1 !== month ||
+        d.getUTCDate() !== day
+    ) {
+        return null;
+    }
+    return d;
+}
+
+/**
+ * Interpreta la primera fecha numérica como MM DD YY/MM DD YYYY (prioridad alta).
+ * Ej: "05 08 26" => 2026-05-08.
+ * @param {string} text
+ * @returns {{ start: number, end: number, date: Date } | null}
+ */
+function parseUsNumericDatePriority(text) {
+    const re = /\b(\d{1,2})\s+(\d{1,2})\s+(\d{2}|\d{4})\b/g;
+    let m;
+    while ((m = re.exec(String(text ?? ''))) != null) {
+        const d = buildDateFromMonthDayYear(m[1], m[2], m[3]);
+        if (!d) continue;
+        return { start: m.index, end: m.index + m[0].length, date: d };
+    }
+    return null;
+}
+
 /**
  * Detecta la primera fecha en español con chrono (`parseDate` / `parse`, ref. Bogotá y `forwardDate: true`).
  * Ajustes: (1) día de semana sin "este/esta" que cae en hoy Bogotá → +7 días; (2) "próximo" con fecha
@@ -482,7 +528,15 @@ function parseTaskText(text) {
     if (!trimmed) {
         return { cleanTitle: '', taskDate: null };
     }
-    const chronoBogotaRef = { instant: new Date(), timezone: 'America/Bogota' };
+    const priorityNumeric = parseUsNumericDatePriority(trimmed);
+    if (priorityNumeric) {
+        const before = trimmed.slice(0, priorityNumeric.start);
+        const after = trimmed.slice(priorityNumeric.end);
+        let cleanTitle = `${before}${after}`.replace(/\s+/g, ' ').trim();
+        cleanTitle = stripEdgeDateConnectors(cleanTitle);
+        return { cleanTitle, taskDate: priorityNumeric.date };
+    }
+    const chronoBogotaRef = { instant: getNlpReferenceDateBogota(), timezone: 'America/Bogota' };
     if (chrono.es.parseDate(trimmed, chronoBogotaRef, CHRONO_PARSE_OPTIONS) == null) {
         return { cleanTitle: trimmed, taskDate: null };
     }
