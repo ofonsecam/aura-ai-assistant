@@ -12,6 +12,7 @@ const {
     getDailyTasks,
     getWeeklyTasks,
     getMonthTasks,
+    getOverdueTasks,
     rescheduleTaskDateByPageId,
     updateNotionTaskStatus,
     deleteNotionTask,
@@ -46,13 +47,13 @@ const helpMessage = `
 
 Área/ ver → Filtra pendientes
 
-/lista → Ver todos los pendientes
-
 /listad → Ver tareas del día (hoy)
 
 /listas → Ver tareas de la semana actual
 
 /listam → Ver tareas del mes actual
+
+/listav → Ver tareas vencidas
 
 /reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual
 
@@ -77,6 +78,32 @@ $ [Monto] [Concepto] → Registro gasto
 
 Nota: Para Iglesia, usa el prefijo Iglesia/.`;
 
+const MANAGE_TASK_SELECTION_PROMPT = "¿Qué número de tarea quieres gestionar mi papacho?";
+const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
+const interactiveTaskActionContext = new Map();
+const interactiveRescheduleContext = new Map();
+
+function buildInteractiveManageKeyboard() {
+    return {
+        inline_keyboard: [[{ text: "⚙️ Gestionar Tarea", callback_data: "itask_manage_prompt" }]],
+    };
+}
+
+function buildInteractiveTaskActionsKeyboard(pageId) {
+    return {
+        inline_keyboard: [
+            [
+                { text: "✅ Hecho", callback_data: `itask_done:${pageId}` },
+                { text: "⏸ Pausa", callback_data: `itask_pause:${pageId}` },
+            ],
+            [
+                { text: "📅 Reprogramar", callback_data: `itask_reschedule:${pageId}` },
+                { text: "🗑 Borrar", callback_data: `itask_delete:${pageId}` },
+            ],
+        ],
+    };
+}
+
 /**
  * Respuesta de éxito/error tras crear tarea en Notion (Database ID, ID página, enlace API).
  * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string } | { ok: false, error: string }} result
@@ -98,8 +125,9 @@ function splitTaskTitleForNotion(rawTitle) {
 
 function formatTaskSavedTelegramReply(result) {
     if (!result || result.ok === false) {
+        const base = String(result?.error || "❌ No pude guardar la tarea en Notion mi Rey, so sorry.").trim();
         return {
-            text: result?.error || "❌ No se pudo guardar la tarea en Notion.",
+            text: `${base} Tranqui mi papacho, lo intentamos otra vez sumercito rela.`,
             parseMode: "Markdown",
         };
     }
@@ -112,7 +140,7 @@ function formatTaskSavedTelegramReply(result) {
         ? `<a href="${escAttr(url)}">Abrir en Notion</a>`
         : "<i>Sin URL en la respuesta de la API.</i>";
     const text = [
-        "✅ Tarea guardada.",
+        "✅ Got it mi papacho sumercer tranquilo my homie.",
         `<b>Database ID:</b> <code>${dbId}</code>`,
         `<b>ID página:</b> <code>${pageId}</code>`,
         linkLine,
@@ -137,6 +165,22 @@ async function telegramSendMessage(token, chatId, text, replyMarkup = null, pars
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
+}
+
+async function telegramSendMessageAndGetResult(token, chatId, text, replyMarkup = null, parseMode = "Markdown") {
+    const body = { chat_id: chatId, text, parse_mode: parseMode };
+    if (replyMarkup) body.reply_markup = replyMarkup;
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+        const detail = data?.description || String(res.status);
+        throw new Error(`Telegram sendMessage error: ${detail}`);
+    }
+    return data.result;
 }
 
 async function telegramEditMessageText(token, chatId, messageId, text, replyMarkup = null, parseMode = "Markdown") {
@@ -274,6 +318,18 @@ function formatSequentialTaskStatusList(tasks) {
         .map((task, index) => `${index + 1}. ${task.name} - ${task.status}`)
         .join("\n");
 }
+
+/**
+ * @param {any[]} overduePages
+ * @returns {{ id: string, name: string, status: string }[]}
+ */
+function mapOverduePagesToTasks(overduePages) {
+    return (overduePages || []).map((page) => ({
+        id: page?.id || "",
+        name: page?.properties?.Name?.title?.[0]?.text?.content || "Sin título",
+        status: page?.properties?.Estado?.select?.name || "---",
+    }));
+}
 /**
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
  * @returns {null | { prefix: string, prefixNorm: string, content: string }}
@@ -327,7 +383,7 @@ async function tryHandleHabitSlashCommand(token, chatId, text) {
     if (!isHabitSlashPrefix(parsed)) return false;
 
     if (!parsed.content.trim()) {
-        await telegramSendMessage(token, chatId, "⚠️ Indica el hábito (ej. `habito/ Oración`).");
+        await telegramSendMessage(token, chatId, "⚠️ Indica el hábito, mi rey no sea asi, colaboreme pille algo como `habito/ Oración`.");
         return true;
     }
 
@@ -336,22 +392,22 @@ async function tryHandleHabitSlashCommand(token, chatId, text) {
     try {
         dailyResult = await ensureDailyHabitPage();
     } catch (e) {
-        await telegramSendMessage(token, chatId, e.message || String(e));
+        await telegramSendMessage(token, chatId, `${e.message || String(e)} Tranqui mi rey, lo checamos asap!.`);
         return true;
     }
     if (!dailyResult?.ok || !dailyResult.page_id) {
-        await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+        await telegramSendMessage(token, chatId, "❌ No pude asegurar la página diaria de hábitos mi rey ay me disculparas ala carachas.");
         return true;
     }
 
     const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
     if (!markResult.ok) {
-        await telegramSendMessage(token, chatId, markResult.message);
+        await telegramSendMessage(token, chatId, `${markResult.message} Tranqui mi papacho lo ajustamos sumercito rela.`);
         return true;
     }
 
     const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${markResult.resolvedName} registrado en la base de hábitos.`;
+    let msg = `✅ Hábito ${markResult.resolvedName} Registrado my littele associated!.`;
     if (habitsLink) msg += `\n${habitsLink}`;
     await telegramSendMessage(token, chatId, msg);
     return true;
@@ -362,20 +418,20 @@ async function sendHabitIntentResult(token, chatId, habitName) {
     try {
         dailyResult = await ensureDailyHabitPage();
     } catch (e) {
-        await telegramSendMessage(token, chatId, e.message || String(e));
+        await telegramSendMessage(token, chatId, `${e.message || String(e)} Tranqui mi rey lo revisamos para antier!.`);
         return;
     }
     if (!dailyResult?.ok || !dailyResult.page_id) {
-        await telegramSendMessage(token, chatId, "❌ No se pudo asegurar la página diaria para hábitos.");
+        await telegramSendMessage(token, chatId, "❌ No pude asegurar la página diaria de hábitos mi rey mala mia, pero reviselo!");
         return;
     }
     const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
     if (!markResult.ok) {
-        await telegramSendMessage(token, chatId, markResult.message);
+        await telegramSendMessage(token, chatId, `${markResult.message} Tranqui mi papacho lo ajustamos ya mismo!.`);
         return;
     }
     const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${markResult.resolvedName} registrado en la base de hábitos.`;
+    let msg = `✅ Hábito ${markResult.resolvedName} Registrado my little associated!`;
     if (habitsLink) msg += `\n${habitsLink}`;
     await telegramSendMessage(token, chatId, msg);
 }
@@ -397,15 +453,15 @@ async function handleInlineSlashPrefix(token, chatId, text) {
 
     if (prefixNorm === "nota") {
         if (!content) {
-            await telegramSendMessage(token, chatId, "⚠️ Escribe el texto de la nota después de `nota/`.");
+            await telegramSendMessage(token, chatId, "⚠️ Espere un momentico escriba bien eso! el texto de la nota después de `nota/` mi papacho tratame serio!");
             return true;
         }
         const title = noteTitleFromNotaBody(content);
         const result = await createNotionNotePage(title, content);
         if (typeof result === "string" && result.startsWith("❌")) {
-            await telegramSendMessage(token, chatId, result);
+            await telegramSendMessage(token, chatId, `${result} Tranqui mi rey, lo ajustamos ya mismo!`);
         } else {
-            await telegramSendMessage(token, chatId, `📝 Nota guardada: *${title}*`);
+            await telegramSendMessage(token, chatId, `📝 Nota guardada mi rey hay para que despues le heche el ojo! *${title}*`);
         }
         return true;
     }
@@ -415,15 +471,15 @@ async function handleInlineSlashPrefix(token, chatId, text) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "⚠️ Escribe el título de la minuta después de `m/` o `minuta/` (ej. `m/ Reunión Obispado`)."
+                "⚠️ Escriba completo el título de la minuta después de `m/` o `minuta/` mijo pille algo como `m/ Reunión Obispado`."
             );
             return true;
         }
         const result = await createNotionMinutePage(content);
         if (typeof result === "string" && result.startsWith("❌")) {
-            await telegramSendMessage(token, chatId, result);
+            await telegramSendMessage(token, chatId, `${result} Tranqui mi rey, lo ajustamos.`);
         } else {
-            await telegramSendMessage(token, chatId, `📋 Minuta registrada: *${content}*`);
+            await telegramSendMessage(token, chatId, `📋 Minuta registrada mijo, pero revisela y hagale! *${content}*`);
         }
         return true;
     }
@@ -433,15 +489,15 @@ async function handleInlineSlashPrefix(token, chatId, text) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "⚠️ Escribe el nombre después de `act/` o `actividad/` (ej. `act/ Noche de talentos`)."
+                "⚠️ Como asi? Escriba el nombre después de `act/` o `actividad/` mi papacho tratame serio ej. `act/ Noche de talentos`."
             );
             return true;
         }
         const result = await createNotionActivityPage(content);
         if (typeof result === "string" && result.startsWith("❌")) {
-            await telegramSendMessage(token, chatId, result);
+            await telegramSendMessage(token, chatId, `${result} Tranqui mi rey lo ajustamos ya mismo!`);
         } else {
-            await telegramSendMessage(token, chatId, `📌 Actividad creada (Planificación): *${content}*`);
+            await telegramSendMessage(token, chatId, `📌 Actividad creada mi papacho, vaya y revise que le falta! *${content}*`);
         }
         return true;
     }
@@ -455,7 +511,7 @@ async function handleInlineSlashPrefix(token, chatId, text) {
         await telegramSendMessage(
             token,
             chatId,
-            "⚠️ Escribe la tarea después de `/` (ej. `Iglesia/ Leer`)."
+            "⚠️ Pero como joven? Escriba bien esa vaina! la tarea después de `/` mi rey algo como `Iglesia/ Leer`. yo vere!"
         );
         return true;
     }
@@ -501,6 +557,87 @@ module.exports = async function handler(req, res) {
     if (cb) {
         const cbData = cb.data || "";
 
+        if (cbData === "itask_manage_prompt") {
+            const forceReply = { force_reply: true, selective: true };
+            await telegramSendMessage(
+                token,
+                cb.message.chat.id,
+                MANAGE_TASK_SELECTION_PROMPT,
+                forceReply
+            );
+            await telegramAnswerCallbackQuery(token, cb.id);
+            return res.status(200).send("OK");
+        }
+
+        if (
+            cbData.startsWith("itask_done:") ||
+            cbData.startsWith("itask_pause:") ||
+            cbData.startsWith("itask_reschedule:") ||
+            cbData.startsWith("itask_delete:")
+        ) {
+            const [action, pageId] = cbData.split(":");
+            if (!pageId) {
+                await telegramAnswerCallbackQuery(token, cb.id, "No pude identificar la tarea aprende a tratarme serio!");
+                return res.status(200).send("OK");
+            }
+
+            if (action === "itask_done") {
+                const result = await updateNotionTaskStatus(pageId, "Hecho", true);
+                await telegramSendMessage(
+                    token,
+                    cb.message.chat.id,
+                    result.ok
+                        ? `✅ Tarea completada mi rey! Asi se hace! no le baje que ya casi!: ${result.taskName}`
+                        : `❌ No pude completar la tarea mi papacho mala mia... pereme me ajusto y lo intentamos de nuevo! ${result.text || ""}`.trim()
+                );
+                await telegramAnswerCallbackQuery(token, cb.id);
+                return res.status(200).send("OK");
+            }
+
+            if (action === "itask_pause") {
+                const result = await updateNotionTaskStatus(pageId, "Pausado", true);
+                await telegramSendMessage(
+                    token,
+                    cb.message.chat.id,
+                    result.ok
+                        ? `⏸ Tarea pausada mi rey: ${result.taskName}`
+                        : `❌ No pude pausar la tarea, mijo, intentele de nuevo! ${result.text || ""}`.trim()
+                );
+                await telegramAnswerCallbackQuery(token, cb.id);
+                return res.status(200).send("OK");
+            }
+
+            if (action === "itask_delete") {
+                const reply = await deleteNotionTask(pageId, true);
+                await telegramSendMessage(
+                    token,
+                    cb.message.chat.id,
+                    String(reply || "").startsWith("❌")
+                        ? `${reply} Tranqui mi rey lo intentamos de nuevo para antier!`
+                        : `${reply} Listo mi papacho usted sabe como soy yo!`
+                );
+                await telegramAnswerCallbackQuery(token, cb.id);
+                return res.status(200).send("OK");
+            }
+
+            const actionKey = `${cb.message.chat.id}:${cb.message.message_id}`;
+            const taskCtx = interactiveTaskActionContext.get(actionKey) || null;
+            const forceReply = { force_reply: true, selective: true };
+            const promptMsg = await telegramSendMessageAndGetResult(
+                token,
+                cb.message.chat.id,
+                MANAGE_TASK_RESCHEDULE_PROMPT,
+                forceReply
+            );
+            const ctxKey = `${cb.message.chat.id}:${promptMsg.message_id}`;
+            interactiveRescheduleContext.set(ctxKey, {
+                pageId,
+                taskName: taskCtx?.taskName || "Tarea",
+            });
+            await telegramAnswerCallbackQuery(token, cb.id);
+            return res.status(200).send("OK");
+        }
+
         if (cbData === "tpx:first") {
             await telegramAnswerCallbackQuery(token, cb.id, "Ya estás en la primera página.");
             return res.status(200).send("OK");
@@ -529,7 +666,7 @@ module.exports = async function handler(req, res) {
             const { tasks } = await readNotionTasks(filter, "");
             const { totalPages } = clampTaskListPage(0, tasks.length, TASKS_PAGE_SIZE);
             if (!Number.isFinite(fromPage)) {
-                await telegramAnswerCallbackQuery(token, cb.id, "No se pudo cambiar de página.");
+                await telegramAnswerCallbackQuery(token, cb.id, "No pude cambiar de página mijo, echele gafa y me comenta!");
                 return res.status(200).send("OK");
             }
             const targetPage = isPrev ? fromPage - 1 : fromPage + 1;
@@ -554,8 +691,8 @@ module.exports = async function handler(req, res) {
             // Mensaje personalizado de pausa
             const messageText =
                 result.ok
-                    ? `🚀 Tarea pausada: ${result.taskName}`
-                    : result.text;
+                    ? `🚀 Tarea pausada mi rey: ${result.taskName}`
+                    : `❌ No pude pausar la tarea mi papacho mala mia ${result.text || ""}`.trim();
             await telegramSendMessage(token, cb.message.chat.id, messageText);
             return res.status(200).send("OK");
         }
@@ -568,8 +705,8 @@ module.exports = async function handler(req, res) {
         const result = await updateNotionTaskStatus(pageId, status, true);
         const messageText =
             action === "doing_blue" && result.ok
-                ? `🔵 Tarea en curso: ${result.taskName}`
-                : result.text;
+                ? `🔵 Tarea en curso mi rey pisele pisele!! ${result.taskName}`
+                : `❌ No pude actualizar la tarea mijo dejeme me ajusto las tuercas ${result.text || ""}`.trim();
         await telegramSendMessage(token, cb.message.chat.id, messageText);
         return res.status(200).send("OK");
     }
@@ -579,6 +716,60 @@ module.exports = async function handler(req, res) {
     const text = (message.text || "").trim();
 
     try {
+        if (message.reply_to_message?.from?.is_bot) {
+            const replyPrompt = String(message.reply_to_message?.text || "").trim();
+
+            if (replyPrompt === MANAGE_TASK_SELECTION_PROMPT) {
+                const selectedNumber = Number(text);
+                if (!Number.isInteger(selectedNumber) || selectedNumber <= 0) {
+                    await telegramSendMessage(token, chatId, "❌ Pero como? Respondame como es! Con un número válido de tarea mi rey!");
+                    return res.status(200).send("OK");
+                }
+
+                const { tasks } = await getMonthTasks();
+                const taskIndex = selectedNumber - 1;
+                if (taskIndex < 0 || taskIndex >= tasks.length) {
+                    await telegramSendMessage(token, chatId, `❌ Índice inválido mijo. Tratame serio y use un número entre 1 y ${tasks.length || 1}.`);
+                    return res.status(200).send("OK");
+                }
+
+                const selectedTask = tasks[taskIndex];
+                const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedTask.id);
+                const actionMsg = await telegramSendMessageAndGetResult(
+                    token,
+                    chatId,
+                    `🎯 Tarea seleccionada: ${selectedTask.name}\n¿Qué acción quieres ejecutar?`,
+                    actionKeyboard
+                );
+                interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
+                    pageId: selectedTask.id,
+                    taskName: selectedTask.name,
+                });
+                return res.status(200).send("OK");
+            }
+
+            if (replyPrompt === MANAGE_TASK_RESCHEDULE_PROMPT) {
+                const ctxKey = `${chatId}:${message.reply_to_message.message_id}`;
+                const ctx = interactiveRescheduleContext.get(ctxKey);
+                if (!ctx?.pageId) {
+                    await telegramSendMessage(token, chatId, "❌ Esta respuesta no corresponde a una reprogramación activa mi papacho, echele gafa y me comenta!");
+                    return res.status(200).send("OK");
+                }
+                interactiveRescheduleContext.delete(ctxKey);
+                const result = await rescheduleTaskDateByPageId(ctx.pageId, text);
+                if (!result.ok) {
+                    await telegramSendMessage(token, chatId, `${result.error} Tranqui mi rey, lo volvemos a intentar ya mismo!`);
+                    return res.status(200).send("OK");
+                }
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    `✅ Tarea reprogramada mi rey, pero ojo! Hagala porque y entonces?: ${ctx.taskName}\nNueva fecha: ${result.dateYmd}`
+                );
+                return res.status(200).send("OK");
+            }
+        }
+
         if (message.voice) {
             await telegramSendMessage(token, chatId, "🎙️ Solo proceso *texto*. Escribe tu mensaje o usa /help.");
             return res.status(200).send("OK");
@@ -588,7 +779,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "🚀 Aura AI Online. Usa `Área/ tarea`, `nota/`, `habito/` o /lista. /help para el manual."
+                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `nota/`, `habito/`, `/listam` o `/listav`. /help para el manual, pero haga algo! no se quede mirando que no esta en venta!"
             );
             return res.status(200).send("OK");
         }
@@ -612,10 +803,6 @@ module.exports = async function handler(req, res) {
         }
 
         if (text.startsWith("/")) {
-            if (text === "/lista") {
-                await sendPendingTaskList(token, chatId);
-                return res.status(200).send("OK");
-            }
             const reprogramaMatch = text.match(/^\/reprogramar?\s+(\d+)\s+(.+)$/i);
             if (reprogramaMatch) {
                 const taskIndex = Number(reprogramaMatch[1]) - 1;
@@ -623,7 +810,7 @@ module.exports = async function handler(req, res) {
                 const { tasks } = await getMonthTasks();
 
                 if (taskIndex < 0 || taskIndex >= tasks.length) {
-                    await telegramSendMessage(token, chatId, `❌ Índice inválido. Usa un número entre 1 y ${tasks.length || 1}.`);
+                    await telegramSendMessage(token, chatId, `❌ Índice inválido mijo! Pero que esta haciendo? Use un número entre 1 y ${tasks.length || 1}.`);
                     return res.status(200).send("OK");
                 }
 
@@ -631,43 +818,50 @@ module.exports = async function handler(req, res) {
                 const pageId = selectedTask?.id;
                 const result = await rescheduleTaskDateByPageId(pageId, naturalDateText);
                 if (!result.ok) {
-                    await telegramSendMessage(token, chatId, result.error);
+                    await telegramSendMessage(token, chatId, `${result.error} Tranqui mi rey lo volvemos a intentar ya mismo!`);
                     return res.status(200).send("OK");
                 }
 
                 await telegramSendMessage(
                     token,
                     chatId,
-                    `✅ Tarea reprogramada: ${selectedTask.name}\nNueva fecha: ${result.dateYmd}`
+                    `✅ Tarea reprogramada, mi rey: ${selectedTask.name}\nNueva fecha: ${result.dateYmd}`
                 );
                 return res.status(200).send("OK");
             }
             if (text === "/listad") {
                 const { tasks } = await getDailyTasks();
                 const messageText = `📅 Tareas de hoy:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText);
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
                 return res.status(200).send("OK");
             }
             if (text === "/listas") {
                 const { tasks } = await getWeeklyTasks();
                 const messageText = `🗓️ Tareas de esta semana:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText);
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
                 return res.status(200).send("OK");
             }
             if (text === "/listam") {
                 const { tasks } = await getMonthTasks();
                 const messageText = `🗓️ Tareas de este mes:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText);
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
                 return res.status(200).send("OK");
             }
-            await telegramSendMessage(token, chatId, "❓ Comando no reconocido. Usa /help o /lista.");
+            if (text === "/listav") {
+                const overduePages = await getOverdueTasks();
+                const overdueTasks = mapOverduePagesToTasks(overduePages);
+                const messageText = `⚠️ Tareas vencidas:\n${formatSequentialTaskStatusList(overdueTasks)}`;
+                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard());
+                return res.status(200).send("OK");
+            }
+            await telegramSendMessage(token, chatId, "❓ Comando no reconocido mijo. Pille echele gafa y use /help");
             return res.status(200).send("OK");
         }
 
         if (text.startsWith("+")) {
             const rest = text.substring(1).trim();
             if (!rest) {
-                await telegramSendMessage(token, chatId, "⚠️ Escribe algo después del +.");
+                await telegramSendMessage(token, chatId, "⚠️ Escribe algo después del `+` mijo si no, no funciona!");
                 return res.status(200).send("OK");
             }
             const colonIdx = rest.indexOf(":");
@@ -684,7 +878,7 @@ module.exports = async function handler(req, res) {
                 await telegramSendMessage(
                     token,
                     chatId,
-                    "⚠️ Indica el nombre de la tarea después de `:` (ej. `+ Trabajo: revisar correo`)."
+                    "⚠️ Espere un momentico joven! Indique bien el nombre de la tarea después de `:` mi rey pille algo asi `+ Trabajo: revisar correo`."
                 );
                 return res.status(200).send("OK");
             }
@@ -705,21 +899,21 @@ module.exports = async function handler(req, res) {
                 await telegramSendMessage(
                     token,
                     chatId,
-                    "⚠️ Tras `$` indica un monto (ej. `$15000 almuerzo`)."
+                    "⚠️ Como asi? es que soy adivino? Hable claro y diga cuanto fue mijo ej. `$15000 almuerzo`."
                 );
                 return res.status(200).send("OK");
             }
             const { amountStr, concept } = parsed;
             const result = await createNotionExpensePage(amountStr, concept);
             if (typeof result === "string" && result.startsWith("❌")) {
-                await telegramSendMessage(token, chatId, result);
+                await telegramSendMessage(token, chatId, `${result} Tranqui mi papacho lo intentamos de nuevo, sumecer tranqui.`);
             } else {
                 const montoNum = parseExpenseAmount(amountStr);
                 const montoLabel = Number.isFinite(montoNum) ? String(montoNum) : amountStr;
                 await telegramSendMessage(
                     token,
                     chatId,
-                    `💸 Gasto registrado en Inbox: $${montoLabel} por ${concept}. Recuerda moverlo a tu presupuesto mensual en Notion.`
+                    `💸 Gasto registrado mi papacho, pero sea responsable porque se emociona y paila! $${montoLabel} por ${concept}. Recuerde que tiene que moverlo a tu presupuesto mensual en Notion.`
                 );
             }
             return res.status(200).send("OK");
@@ -736,7 +930,7 @@ module.exports = async function handler(req, res) {
         if (intent === "TASK") {
             const nameRaw = (data.Name || "").trim();
             if (!nameRaw) {
-                await telegramSendMessage(token, chatId, "⚠️ No pude extraer el nombre de la tarea.");
+                await telegramSendMessage(token, chatId, "⚠️ No pude extraer el nombre de la tarea socio, mire donde metio el dedo y escriba bien!");
                 return res.status(200).send("OK");
             }
             let { name, fechaYmd } = splitTaskTitleForNotion(nameRaw);
@@ -761,9 +955,9 @@ module.exports = async function handler(req, res) {
             const content = data.content != null ? String(data.content) : text;
             const result = await createNotionNotePage(title, content);
             if (typeof result === "string" && result.startsWith("❌")) {
-                await telegramSendMessage(token, chatId, result);
+                await telegramSendMessage(token, chatId, `${result} Tranqui mi rey lo ajustamos para antier!`);
             } else {
-                await telegramSendMessage(token, chatId, `📝 Nota guardada: *${title}*`);
+                await telegramSendMessage(token, chatId, `📝 Nota guardada mi rey: *${title}*`);
             }
             return res.status(200).send("OK");
         }
@@ -771,7 +965,7 @@ module.exports = async function handler(req, res) {
         if (intent === "HABIT") {
             let habitName = (data.habitName || "").trim();
             if (!habitName) {
-                await telegramSendMessage(token, chatId, "⚠️ No identifiqué el hábito.");
+                await telegramSendMessage(token, chatId, "⚠️ No identifiqué el hábito mi papacho, como dices que dijiste?");
                 return res.status(200).send("OK");
             }
             await sendHabitIntentResult(token, chatId, habitName);
@@ -783,17 +977,17 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        await telegramSendMessage(token, chatId, "⚠️ Respuesta del asistente no reconocida. Intenta de nuevo.");
+        await telegramSendMessage(token, chatId, "⚠️ Uy nooo, no le entendi, mas despacio porque me pierdo! Mire donde mete el dedo e ntenta de nuevo.");
     } catch (err) {
         console.error(err);
         if (err.message && String(err.message).includes("503")) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "⚠️ Gemini no está disponible (503). Prueba en un momento o usa `Área/ tarea` o `+` para tarea rápida."
+                "⚠️ Gemini no está disponible (503) y usted ya sabe que paila mi rey! Prueba mas ratico o use `Área/ tarea` o `+` para tarea rápida, ya se la sabe! hagale!"
             );
         } else {
-            await telegramSendMessage(token, chatId, `⚠️ Error: ${err.message}`);
+            await telegramSendMessage(token, chatId, `⚠️ Error mijo, vealo bien y revise o me motorea y paila! ${err.message}`);
         }
     }
 

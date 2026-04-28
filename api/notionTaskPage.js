@@ -582,26 +582,12 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
         taskName = match.name;
     }
 
-    const properties = {
-        [PROP_TASK_ESTADO]: { select: { name: newStatus } },
-    };
-    if (isTaskStatusCompleted(newStatus)) {
-        properties[PROP_TASK_FECHA_CIERRE] = {
-            date: { start: getNowBogotaIsoForNotionDateTime() },
-        };
-    } else {
-        properties[PROP_TASK_FECHA_CIERRE] = { date: null };
-    }
-
-    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
-        method: 'PATCH',
-        headers: NOTION_HEADERS,
-        body: JSON.stringify({ properties }),
-    });
-    if (!res.ok) {
+    let data;
+    try {
+        data = await updateTaskStatus(pageId, newStatus);
+    } catch (_) {
         return { ok: false, text: '❌ Error al actualizar.' };
     }
-    const data = await res.json();
     const nameFromPage =
         data?.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content?.trim() || null;
     const resolvedName = taskName || nameFromPage || 'Tarea';
@@ -610,6 +596,52 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
         text: `✅ Tarea actualizada a ${newStatus}`,
         taskName: resolvedName
     };
+}
+
+/**
+ * Actualiza el select Estado de una tarea específica en Notion por page_id.
+ * También sincroniza Fecha de Cierre cuando el estado es completado.
+ * @param {string} pageId
+ * @param {string} newStatus
+ * @returns {Promise<any>} Página de Notion actualizada.
+ */
+async function updateTaskStatus(pageId, newStatus) {
+    const id = String(pageId || '').trim();
+    const status = String(newStatus || '').trim();
+    if (!id || !NOTION_UUID_RE.test(id)) {
+        throw new Error('pageId inválido.');
+    }
+    if (!status) {
+        throw new Error('newStatus inválido.');
+    }
+
+    const properties = {
+        [PROP_TASK_ESTADO]: { select: { name: status } },
+    };
+    if (isTaskStatusCompleted(status)) {
+        properties[PROP_TASK_FECHA_CIERRE] = {
+            date: { start: getNowBogotaIsoForNotionDateTime() },
+        };
+    } else {
+        properties[PROP_TASK_FECHA_CIERRE] = { date: null };
+    }
+
+    const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+        method: 'PATCH',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ properties }),
+    });
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) {
+            /* ignore */
+        }
+        throw new Error(`Error Notion actualizando estado (${detail}).`);
+    }
+    return await res.json();
 }
 
 async function readNotionTasks(filterArea, filterDate) {
@@ -830,8 +862,7 @@ async function rescheduleTaskDateByPageId(pageId, naturalDateText) {
 }
 
 async function getOverdueTasks() {
-    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
-    const todayStr = now.toISOString().slice(0, 10);
+    const todayStr = getTodayBogotaYmd();
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
         headers: NOTION_HEADERS,
@@ -841,7 +872,8 @@ async function getOverdueTasks() {
                     {
                         or: [
                             { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
-                            { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } }
+                            { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                            { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } }
                         ]
                     },
                     { property: PROP_TASK_FECHA, date: { before: todayStr } }
@@ -1309,6 +1341,7 @@ module.exports = {
     markHabitAsDone,
     normalizeNotionArea,
     updateNotionTaskStatus,
+    updateTaskStatus,
     readNotionTasks,
     getDailyTasks,
     getWeeklyTasks,
