@@ -16,8 +16,8 @@ export default async function handler(req, res) {
         let greeting;
         if (isDailySlot && hour === 7) greeting = "🌅 ¡Buenos días Don Eduardo!! Estas son tus tareas de hoy:";
         else if (isDailySlot) greeting = "🍱 Veooo my little associate estas son las tareas del día: Ojito con los pendientes";
-        else if (isWeeklySlot) greeting = "🗓️ Enfoque semanal. Veooo my little associate estas son tus tareas de esta semana, Yo vere!:";
-        else greeting = "📋 Veooo my little associate aca esta el resumen programado. Aquí está la lista actual socio!:";
+        else if (isWeeklySlot) greeting = "🗓️ My little associate estas son tus tareas de esta semana, Yo vere!:";
+        else greeting = "📋 My little associate aca esta el resumen programado. Aquí está la lista actual socio!:";
         
         // Usamos tasksText que contiene el string numerado
         let message = `${greeting}\n\n${tasksText}`;

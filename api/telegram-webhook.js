@@ -11,6 +11,7 @@ const {
     readNotionTasks,
     getDailyTasks,
     getWeeklyTasks,
+    getMonthTasks,
     rescheduleTaskDateByPageId,
     updateNotionTaskStatus,
     deleteNotionTask,
@@ -51,7 +52,9 @@ const helpMessage = `
 
 /listas → Ver tareas de la semana actual
 
-/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista semanal
+/listam → Ver tareas del mes actual
+
+/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual
 
 ⛪ Segunda Consejería
 
@@ -617,7 +620,7 @@ module.exports = async function handler(req, res) {
             if (reprogramaMatch) {
                 const taskIndex = Number(reprogramaMatch[1]) - 1;
                 const naturalDateText = reprogramaMatch[2].trim();
-                const { tasks } = await getWeeklyTasks();
+                const { tasks } = await getMonthTasks();
 
                 if (taskIndex < 0 || taskIndex >= tasks.length) {
                     await telegramSendMessage(token, chatId, `❌ Índice inválido. Usa un número entre 1 y ${tasks.length || 1}.`);
@@ -648,6 +651,12 @@ module.exports = async function handler(req, res) {
             if (text === "/listas") {
                 const { tasks } = await getWeeklyTasks();
                 const messageText = `🗓️ Tareas de esta semana:\n${formatSequentialTaskStatusList(tasks)}`;
+                await telegramSendMessage(token, chatId, messageText);
+                return res.status(200).send("OK");
+            }
+            if (text === "/listam") {
+                const { tasks } = await getMonthTasks();
+                const messageText = `🗓️ Tareas de este mes:\n${formatSequentialTaskStatusList(tasks)}`;
                 await telegramSendMessage(token, chatId, messageText);
                 return res.status(200).send("OK");
             }

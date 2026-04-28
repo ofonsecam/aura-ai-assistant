@@ -165,6 +165,24 @@ function getBogotaCurrentWeekMondaySundayYmd() {
 }
 
 /**
+ * Rango YYYY-MM-DD del primer al último día del mes actual en America/Bogota.
+ * @returns {{ monthStart: string, monthEnd: string }}
+ */
+function getBogotaCurrentMonthStartEndYmd() {
+    const { y, m } = getBogotaCalendarTodayParts();
+    const monthStartMs = Date.UTC(y, m - 1, 1, 12, 0, 0);
+    const monthEndMs = Date.UTC(y, m, 0, 12, 0, 0);
+    const toYmd = (ms) => {
+        const dt = new Date(ms);
+        const yy = dt.getUTCFullYear();
+        const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(dt.getUTCDate()).padStart(2, "0");
+        return `${yy}-${mm}-${dd}`;
+    };
+    return { monthStart: toYmd(monthStartMs), monthEnd: toYmd(monthEndMs) };
+}
+
+/**
  * Suma días a una fecha calendario YYYY-MM-DD (UTC mediodía; sin desfases DST raros).
  * @param {string} ymd
  * @param {number} deltaDays
@@ -723,6 +741,30 @@ async function getWeeklyTasks() {
     return { text: formatSummaryTasksText(tasks), tasks, weekStart, weekEnd };
 }
 
+/**
+ * Consulta tareas cuya propiedad Fecha está dentro del mes en curso (Bogotá).
+ * Incluye estados activos: Pendiente, Haciendo y Pausado.
+ * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string }[], monthStart: string, monthEnd: string }>}
+ */
+async function getMonthTasks() {
+    const { monthStart, monthEnd } = getBogotaCurrentMonthStartEndYmd();
+    const pages = await queryTaskDatabaseAll({
+        and: [
+            {
+                or: [
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } }
+                ]
+            },
+            { property: PROP_TASK_FECHA, date: { on_or_after: monthStart } },
+            { property: PROP_TASK_FECHA, date: { on_or_before: monthEnd } }
+        ]
+    });
+    const tasks = pages.map(mapTaskPageToSummaryTask);
+    return { text: formatSummaryTasksText(tasks), tasks, monthStart, monthEnd };
+}
+
 async function deleteNotionTask(searchNameOrId, isId = false) {
     let pageId = isId ? searchNameOrId : null;
     if (!isId) {
@@ -1270,6 +1312,7 @@ module.exports = {
     readNotionTasks,
     getDailyTasks,
     getWeeklyTasks,
+    getMonthTasks,
     deleteNotionTask,
     rescheduleTaskDateByPageId,
     getOverdueTasks,
