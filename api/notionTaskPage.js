@@ -16,6 +16,16 @@ const TASK_STATUS_PENDING = 'Pendiente';
 const TASK_STATUS_PAUSED = 'Pausado';
 /** Valores de Estado que cuentan como tarea completada (cierre del día / reportes). */
 const TASK_STATUS_DONE_VALUES = ['Hecho', 'Done', 'Cumplida'];
+const TASK_ALLOWED_AREAS = [
+    'Trabajo secundario',
+    'Trabajo Traffix',
+    'Iglesia',
+    'Familia',
+    'Carrera',
+    'IA Dev',
+    'Universidad',
+    'Personales',
+];
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 /** Base de hábitos: prioridad NOTION_HABITS_ID (Vercel), alias NOTION_HABITS_DATABASE_ID. */
@@ -437,6 +447,49 @@ function normalizeNotionArea(area) {
         .join(' ');
 }
 
+/**
+ * Canonicaliza texto para entidades temporales:
+ * - lower-case
+ * - variantes de "mañana/manana" -> token "__tomorrow__"
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeDateEntitiesText(text) {
+    const raw = String(text ?? '').toLowerCase();
+    return raw.replace(/\bma(?:ñ|n)ana\b/g, '__tomorrow__');
+}
+
+/**
+ * Crea una clave estable para comparar texto ignorando acentos/mayúsculas.
+ * @param {string} text
+ * @returns {string}
+ */
+function toComparableKey(text) {
+    return String(text ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, ' ');
+}
+
+/**
+ * Si el título llega como "Area/ tarea", extrae área válida y limpia el nombre.
+ * @param {string} rawName
+ * @returns {{ cleanName: string, areaFromPrefix: string }}
+ */
+function extractAreaPrefixFromName(rawName) {
+    const trimmed = String(rawName ?? '').trim();
+    if (!trimmed) return { cleanName: '', areaFromPrefix: '' };
+    const m = trimmed.match(/^([^/\n]+)\s*\/\s*(.+)$/);
+    if (!m) return { cleanName: trimmed, areaFromPrefix: '' };
+    const prefix = normalizeNotionArea(m[1]);
+    const areaByKey = new Map(TASK_ALLOWED_AREAS.map((a) => [toComparableKey(a), a]));
+    const resolvedArea = areaByKey.get(toComparableKey(prefix)) || '';
+    if (!resolvedArea) return { cleanName: trimmed, areaFromPrefix: '' };
+    return { cleanName: String(m[2] ?? '').trim(), areaFromPrefix: resolvedArea };
+}
+
 async function findBestFuzzyMatch(searchName) {
     const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
         method: 'POST',
@@ -528,6 +581,7 @@ function parseTaskText(text) {
     if (!trimmed) {
         return { cleanTitle: '', taskDate: null };
     }
+    const normalizedEntities = normalizeDateEntitiesText(trimmed);
     const priorityNumeric = parseUsNumericDatePriority(trimmed);
     if (priorityNumeric) {
         const before = trimmed.slice(0, priorityNumeric.start);
@@ -535,6 +589,13 @@ function parseTaskText(text) {
         let cleanTitle = `${before}${after}`.replace(/\s+/g, ' ').trim();
         cleanTitle = stripEdgeDateConnectors(cleanTitle);
         return { cleanTitle, taskDate: priorityNumeric.date };
+    }
+    if (normalizedEntities.includes('__tomorrow__')) {
+        const tomorrowYmd = addCalendarDaysYmd(getTodayBogotaYmd(), 1);
+        const taskDate = new Date(`${tomorrowYmd}T12:00:00-05:00`);
+        let cleanTitle = trimmed.replace(/\bma(?:ñ|n)ana\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        cleanTitle = stripEdgeDateConnectors(cleanTitle);
+        return { cleanTitle, taskDate };
     }
     const chronoBogotaRef = { instant: getNlpReferenceDateBogota(), timezone: 'America/Bogota' };
     if (chrono.es.parseDate(trimmed, chronoBogotaRef, CHRONO_PARSE_OPTIONS) == null) {
@@ -577,8 +638,19 @@ function parseTaskText(text) {
 
 async function createNotionTaskPage(taskData) {
     let name = (taskData.Name || '').trim();
+    const fromPrefix = extractAreaPrefixFromName(name);
+    if (fromPrefix.cleanName) {
+        name = fromPrefix.cleanName;
+    }
     const areaRaw = String(taskData.Area != null ? taskData.Area : 'Personales').trim();
     let area = normalizeNotionArea(areaRaw).trim();
+    if (fromPrefix.areaFromPrefix && (!area || toComparableKey(area) === toComparableKey('Personales'))) {
+        area = fromPrefix.areaFromPrefix;
+    }
+    const parsedFromName = parseTaskText(name);
+    if (parsedFromName.cleanTitle && parsedFromName.cleanTitle.trim()) {
+        name = parsedFromName.cleanTitle.trim();
+    }
     if (/\b(URGENTE|YA|IMPORTANTE)\b/i.test(name)) {
         if (!name.startsWith('🚨')) name = '🚨 ' + name;
         if (area === 'Personales') area = 'IA Dev';
@@ -586,6 +658,9 @@ async function createNotionTaskPage(taskData) {
     area = area.trim();
     const fechaRaw = (taskData.Fecha != null ? String(taskData.Fecha) : '').trim();
     let fechaYmd = resolveNaturalDate(fechaRaw);
+    if ((!fechaYmd || !/^\d{4}-\d{2}-\d{2}$/.test(fechaYmd)) && parsedFromName.taskDate) {
+        fechaYmd = taskDateToBogotaYmd(parsedFromName.taskDate);
+    }
     if (!fechaYmd || !/^\d{4}-\d{2}-\d{2}$/.test(fechaYmd)) {
         fechaYmd = getTodayBogotaYmd();
     }
@@ -616,7 +691,10 @@ async function createNotionTaskPage(taskData) {
         id: data.id,
         url: typeof data.url === 'string' ? data.url.trim() : '',
         databaseId,
-        databaseName: TASKS_DATABASE_DISPLAY_NAME
+        databaseName: TASKS_DATABASE_DISPLAY_NAME,
+        taskName: name,
+        dateYmd: fechaYmd,
+        area
     };
 }
 

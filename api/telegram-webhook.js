@@ -126,7 +126,7 @@ function buildInteractiveTaskActionsKeyboard(pageId) {
 
 /**
  * Respuesta de éxito/error tras crear tarea en Notion (Database ID, ID página, enlace API).
- * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string } | { ok: false, error: string }} result
+ * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string, taskName?: string, dateYmd?: string } | { ok: false, error: string }} result
  * @returns {{ text: string, parseMode: string }}
  */
 /**
@@ -153,18 +153,11 @@ function formatTaskSavedTelegramReply(result) {
     }
     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const escAttr = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-    const dbId = esc(result.databaseId || "");
-    const pageId = esc(result.id || "");
+    const taskName = esc(result.taskName || "Sin título");
+    const dateYmd = esc(result.dateYmd || "hoy");
     const url = typeof result.url === "string" ? result.url.trim() : "";
-    const linkLine = url
-        ? `<a href="${escAttr(url)}">Abrir en Notion</a>`
-        : "<i>Sin URL en la respuesta de la API.</i>";
-    const text = [
-        "✅ Got it mi papacho sumercer tranquilo my homie.",
-        `<b>Database ID:</b> <code>${dbId}</code>`,
-        `<b>ID página:</b> <code>${pageId}</code>`,
-        linkLine,
-    ].join("\n");
+    const linkLine = url ? `\n<a href="${escAttr(url)}">Abrir en Notion</a>` : "";
+    const text = `✅ Listo my little associated! Tarea creada para ${dateYmd} con el título "${taskName}".${linkLine}`;
     return { text, parseMode: "HTML" };
 }
 
