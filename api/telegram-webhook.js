@@ -2,8 +2,6 @@ const {
     createNotionTaskPage,
     createNotionNotePage,
     createNotionExpensePage,
-    createNotionMinutePage,
-    createNotionActivityPage,
     parseExpenseAmount,
     markHabitAsDone,
     normalizeNotionArea,
@@ -74,9 +72,7 @@ const helpMessage = `
 
 ⛪ Segunda Consejería
 
-m/ [Título] → Crea minuta
-
-act/ [Nombre] → Nueva actividad
+/syncminutas - Sincroniza tareas pendientes desde las minutas del obispado o reuniones grabadas.
 
 📝 Notas y Hábitos
 
@@ -92,6 +88,11 @@ $ [Monto] [Concepto] → Registro gasto
 ✅ Hecho | 🔵 Haciendo | 🚀 Pausar | 🗑️ Eliminar
 
 Nota: Para Iglesia, usa el prefijo Iglesia/.`;
+
+const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
+const MINUTAS_READY_PROP = "Listo para tareas";
+const MINUTAS_PROCESSED_PROP = "Procesada por Aura";
+const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
 const interactiveTaskActionContext = new Map();
@@ -122,6 +123,220 @@ function buildInteractiveTaskActionsKeyboard(pageId) {
             ],
         ],
     };
+}
+
+function notionHeadersOrThrow() {
+    const notionToken = String(process.env.NOTION_TOKEN || "").trim();
+    if (!notionToken) {
+        throw new Error("Falta NOTION_TOKEN.");
+    }
+    return {
+        Authorization: `Bearer ${notionToken}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    };
+}
+
+function richTextToPlain(richText) {
+    if (!Array.isArray(richText)) return "";
+    return richText.map((t) => t?.plain_text || "").join("").trim();
+}
+
+function parseBogotaReferenceMmDdYyToDate() {
+    const mmDdYy = getBogotaReferenceTimeMmDdYy();
+    const m = mmDdYy.match(/^(\d{2})-(\d{2})-(\d{2})$/);
+    if (!m) {
+        return new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    }
+    const month = Number(m[1]);
+    const day = Number(m[2]);
+    const year = 2000 + Number(m[3]);
+    return new Date(Date.UTC(year, month - 1, day, 17, 0, 0));
+}
+
+function parseMmDdYyDateToken(raw) {
+    const m = String(raw || "").trim().match(/^(\d{1,2})-(\d{1,2})-(\d{2}|\d{4})$/);
+    if (!m) return "";
+    const month = Number(m[1]);
+    const day = Number(m[2]);
+    const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    if (!Number.isInteger(month) || !Number.isInteger(day) || !Number.isInteger(year)) return "";
+    if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+    const d = new Date(Date.UTC(year, month - 1, day, 17, 0, 0));
+    if (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== month || d.getUTCDate() !== day) return "";
+    return taskDateToBogotaYmd(d);
+}
+
+function parseSyncMinutaDateToken(dateToken) {
+    const raw = String(dateToken || "").trim();
+    if (!raw) return "";
+    if (/^mañana$|^manana$/i.test(raw)) {
+        const refDate = parseBogotaReferenceMmDdYyToDate();
+        refDate.setUTCDate(refDate.getUTCDate() + 1);
+        return taskDateToBogotaYmd(refDate);
+    }
+    const mmDdYy = parseMmDdYyDateToken(raw);
+    if (mmDdYy) return mmDdYy;
+    const parsed = parseTaskText(raw);
+    if (parsed?.taskDate) {
+        return taskDateToBogotaYmd(parsed.taskDate);
+    }
+    return "";
+}
+
+function parseSyncMinutaTodoText(rawText) {
+    const text = String(rawText || "").replace(/\s+/g, " ").trim();
+    if (!text) return { cleanTitle: "", fechaYmd: "" };
+    const atIdx = text.lastIndexOf("@");
+    if (atIdx <= 0) {
+        return { cleanTitle: text, fechaYmd: "" };
+    }
+    const titlePart = text.slice(0, atIdx).trim();
+    const datePart = text.slice(atIdx + 1).trim();
+    if (!titlePart || !datePart) {
+        return { cleanTitle: text, fechaYmd: "" };
+    }
+    const fechaYmd = parseSyncMinutaDateToken(datePart);
+    return { cleanTitle: titlePart, fechaYmd };
+}
+
+function getPageTitleFromProperties(properties) {
+    const props = properties && typeof properties === "object" ? properties : {};
+    for (const key of Object.keys(props)) {
+        const p = props[key];
+        if (p?.type === "title" && Array.isArray(p.title)) {
+            const title = richTextToPlain(p.title);
+            if (title) return title;
+        }
+    }
+    return "Sin título";
+}
+
+async function notionQueryMinutasReadyPages() {
+    const headers = notionHeadersOrThrow();
+    const out = [];
+    let nextCursor = null;
+    do {
+        const body = {
+            page_size: 100,
+            filter: {
+                and: [
+                    { property: MINUTAS_READY_PROP, checkbox: { equals: true } },
+                    { property: MINUTAS_PROCESSED_PROP, checkbox: { equals: false } },
+                ],
+            },
+        };
+        if (nextCursor) body.start_cursor = nextCursor;
+        const res = await fetch(`https://api.notion.com/v1/databases/${MINUTAS_OBISPADO_DATABASE_ID}/query`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+            throw new Error(`Error consultando minutas (${detail}).`);
+        }
+        out.push(...(Array.isArray(data.results) ? data.results : []));
+        nextCursor = data.has_more ? data.next_cursor : null;
+    } while (nextCursor);
+    return out;
+}
+
+async function notionListAllBlockChildren(blockId) {
+    const headers = notionHeadersOrThrow();
+    const out = [];
+    let nextCursor = null;
+    do {
+        const qs = new URLSearchParams({ page_size: "100" });
+        if (nextCursor) qs.set("start_cursor", nextCursor);
+        const res = await fetch(`https://api.notion.com/v1/blocks/${encodeURIComponent(blockId)}/children?${qs.toString()}`, {
+            method: "GET",
+            headers,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+            throw new Error(`Error leyendo bloques de minuta (${detail}).`);
+        }
+        out.push(...(Array.isArray(data.results) ? data.results : []));
+        nextCursor = data.has_more ? data.next_cursor : null;
+    } while (nextCursor);
+    return out;
+}
+
+function extractTodoTextsAfterAnchorH3(blocks) {
+    const todos = [];
+    let collecting = false;
+    for (const block of blocks) {
+        const type = block?.type;
+        if (type === "heading_3") {
+            const h3Text = richTextToPlain(block?.heading_3?.rich_text);
+            if (!collecting && h3Text === MINUTAS_TASKS_ANCHOR_H3) {
+                collecting = true;
+                continue;
+            }
+            if (collecting) break;
+        }
+        if (collecting && (type === "heading_1" || type === "heading_2")) {
+            break;
+        }
+        if (collecting && type === "to_do") {
+            const todoText = richTextToPlain(block?.to_do?.rich_text);
+            if (todoText) todos.push(todoText);
+        }
+    }
+    return todos;
+}
+
+async function markMinutaAsProcessed(pageId) {
+    const headers = notionHeadersOrThrow();
+    const res = await fetch(`https://api.notion.com/v1/pages/${encodeURIComponent(pageId)}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+            properties: {
+                [MINUTAS_PROCESSED_PROP]: { checkbox: true },
+            },
+        }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+        throw new Error(`No se pudo marcar la minuta como procesada (${detail}).`);
+    }
+}
+
+async function handleSyncMinutasCommand(token, chatId) {
+    const minutaPages = await notionQueryMinutasReadyPages();
+    if (!minutaPages.length) {
+        await telegramSendMessage(token, chatId, "ℹ️ No encontré minutas listas para sincronizar por ahora.");
+        return;
+    }
+    for (const page of minutaPages) {
+        const pageId = String(page?.id || "").trim();
+        if (!pageId) continue;
+        const minutaTitle = getPageTitleFromProperties(page?.properties);
+        const blocks = await notionListAllBlockChildren(pageId);
+        const todoTexts = extractTodoTextsAfterAnchorH3(blocks);
+        let createdCount = 0;
+        for (const todoText of todoTexts) {
+            const { cleanTitle, fechaYmd } = parseSyncMinutaTodoText(todoText);
+            if (!cleanTitle) continue;
+            const createResult = await createNotionTaskPage({
+                Name: cleanTitle,
+                Area: "Iglesia",
+                Fecha: fechaYmd,
+            });
+            if (createResult?.ok) createdCount += 1;
+        }
+        await markMinutaAsProcessed(pageId);
+        await telegramSendMessage(
+            token,
+            chatId,
+            `✅ Listo my little associated! Sincronización completa: Se agregaron ${createdCount} tareas de la reunión '${minutaTitle}' Yo vere a revisar y hacer todo D1`
+        );
+    }
 }
 
 /**
@@ -503,38 +718,12 @@ async function handleInlineSlashPrefix(token, chatId, text) {
     }
 
     if (prefixNorm === "m" || prefixNorm === "minuta") {
-        if (!content) {
-            await telegramSendMessage(
-                token,
-                chatId,
-                "⚠️ Escriba completo el título de la minuta después de `m/` o `minuta/` mijo pille algo como `m/ Reunión Obispado`."
-            );
-            return true;
-        }
-        const result = await createNotionMinutePage(content);
-        if (typeof result === "string" && result.startsWith("❌")) {
-            await telegramSendMessage(token, chatId, `${result} Tranqui mi rey, lo ajustamos.`);
-        } else {
-            await telegramSendMessage(token, chatId, `📋 Minuta registrada mijo, pero revisela y hagale! *${content}*`);
-        }
+        await telegramSendMessage(token, chatId, "ℹ️ Veo pero que pasa mino? Sumerce sabe que `m/` está deshabilitado. Pille echele gafa y use `/syncminutas` para sincronizar tareas desde minutas, ojo mi manito.");
         return true;
     }
 
     if (prefixNorm === "act" || prefixNorm === "actividad") {
-        if (!content) {
-            await telegramSendMessage(
-                token,
-                chatId,
-                "⚠️ Como asi? Escriba el nombre después de `act/` o `actividad/` mi papacho tratame serio ej. `act/ Noche de talentos`."
-            );
-            return true;
-        }
-        const result = await createNotionActivityPage(content);
-        if (typeof result === "string" && result.startsWith("❌")) {
-            await telegramSendMessage(token, chatId, `${result} Tranqui mi rey lo ajustamos ya mismo!`);
-        } else {
-            await telegramSendMessage(token, chatId, `📌 Actividad creada mi papacho, vaya y revise que le falta! *${content}*`);
-        }
+        await telegramSendMessage(token, chatId, "ℹ️ Veo pero que pasa mani? `act/` está deshabilitado y sumercer lo sabe. Pille echele gafa y use `/syncminutas` para sincronizar tareas desde minutas, ojo mi manito, yo vere la buena!.");
         return true;
     }
 
@@ -914,6 +1103,10 @@ module.exports = async function handler(req, res) {
                 const overdueTasks = mapOverduePagesToTasks(overduePages);
                 const messageText = `⚠️ Tareas vencidas:\n${formatSequentialTaskStatusList(overdueTasks)}`;
                 await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_overdue"));
+                return res.status(200).send("OK");
+            }
+            if (text === "/syncminutas") {
+                await handleSyncMinutasCommand(token, chatId);
                 return res.status(200).send("OK");
             }
             await telegramSendMessage(token, chatId, "❓ Comando no reconocido mijo. Pille echele gafa y use /help");
