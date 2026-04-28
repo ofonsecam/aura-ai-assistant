@@ -616,7 +616,7 @@ module.exports = async function handler(req, res) {
                 await sendPendingTaskList(token, chatId);
                 return res.status(200).send("OK");
             }
-            const reprogramaMatch = text.match(/^\/reprograma\s+(\d+)\s+(.+)$/i);
+            const reprogramaMatch = text.match(/^\/reprogramar?\s+(\d+)\s+(.+)$/i);
             if (reprogramaMatch) {
                 const taskIndex = Number(reprogramaMatch[1]) - 1;
                 const naturalDateText = reprogramaMatch[2].trim();
