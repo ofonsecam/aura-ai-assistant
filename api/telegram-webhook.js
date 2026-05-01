@@ -53,7 +53,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.7.8
+📖 Manual de Aura AI v2.7.9
 
 🛠 Gestión de Tareas
 
@@ -628,8 +628,9 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
     const rowTwo = [];
     for (let i = 0; i < visible.length; i += 1) {
         const localIndex = i + 1;
+        const globalTaskLabel = (pageHuman - 1) * pageSize + localIndex;
         const btn = {
-            text: String(localIndex),
+            text: String(globalTaskLabel),
             callback_data: `pick_${localIndex}_${commandKey}_p${pageHuman}`,
         };
         if (localIndex <= 3) rowOne.push(btn);
