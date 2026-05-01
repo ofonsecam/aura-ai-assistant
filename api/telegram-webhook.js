@@ -53,7 +53,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.7.6
+📖 Manual de Aura AI v2.7.7
 
 🛠 Gestión de Tareas
 
@@ -107,12 +107,9 @@ function buildInteractiveTaskActionsKeyboard(pageId) {
     return {
         inline_keyboard: [
             [
-                { text: "✅ Hecho", callback_data: `itask_done:${pageId}` },
-                { text: "⏸ Pausa", callback_data: `itask_pause:${pageId}` },
-            ],
-            [
+                { text: "✅ Done", callback_data: `itask_done:${pageId}` },
                 { text: "📅 Reprogramar", callback_data: `itask_reschedule:${pageId}` },
-                { text: "🗑 Borrar", callback_data: `itask_delete:${pageId}` },
+                { text: "🗑 Borrar", callback_data: `itask_delete:${pageId}` }
             ],
         ],
     };
@@ -428,6 +425,9 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 
 /** Tareas por página en el teclado/lista; más de esto activa fila de paginación. */
 const TASKS_PAGE_SIZE = 8;
+const COMMAND_TASKS_PAGE_SIZE = 10;
+const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
+const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listav"]);
 
 /**
  * @param {number} page Página 0-based solicitada.
@@ -439,6 +439,226 @@ function clampTaskListPage(page, totalTasks, pageSize) {
     const totalPages = Math.ceil(totalTasks / pageSize);
     const p = Math.max(0, Math.min(Number(page) || 0, totalPages - 1));
     return { page: p, totalPages };
+}
+
+function getBogotaNowDate() {
+    return new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+}
+
+function getBogotaTodayYmd() {
+    const now = getBogotaNowDate();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
+
+function getCurrentWeekRangeBogotaYmd() {
+    const now = getBogotaNowDate();
+    const mondayOffset = (now.getDay() + 6) % 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - mondayOffset);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const format = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    };
+    return { startYmd: format(monday), endYmd: format(sunday) };
+}
+
+function getCurrentMonthRangeBogotaYmd() {
+    const now = getBogotaNowDate();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const start = new Date(y, m, 1);
+    const end = new Date(y, m + 1, 0);
+    const format = (d) => {
+        const yy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yy}-${mm}-${dd}`;
+    };
+    return { startYmd: format(start), endYmd: format(end) };
+}
+
+function extractNotionTaskFromPage(page) {
+    const props = page?.properties || {};
+    const titleProp = props.Name?.title;
+    const title = Array.isArray(titleProp) ? richTextToPlain(titleProp) : "Sin título";
+    const area = props.Area?.select?.name || "Sin Área";
+    const fecha = props.Fecha?.date?.start || "";
+    const status = props.Estado?.select?.name || "---";
+    return {
+        id: page?.id || "",
+        name: title || "Sin título",
+        area: area || "Sin Área",
+        fechaYmd: fecha,
+        status,
+    };
+}
+
+function buildTaskFilterByCommand(commandKey) {
+    const statusOr = TASK_STATUS_ACTIVE.map((statusName) => ({
+        property: "Estado",
+        select: { equals: statusName },
+    }));
+    const todayYmd = getBogotaTodayYmd();
+    if (commandKey === "listad") {
+        return {
+            and: [{ or: statusOr }, { property: "Fecha", date: { equals: todayYmd } }],
+        };
+    }
+    if (commandKey === "listas") {
+        const weekRange = getCurrentWeekRangeBogotaYmd();
+        return {
+            and: [
+                { or: statusOr },
+                { property: "Fecha", date: { on_or_after: weekRange.startYmd } },
+                { property: "Fecha", date: { on_or_before: weekRange.endYmd } },
+            ],
+        };
+    }
+    if (commandKey === "listam") {
+        const monthRange = getCurrentMonthRangeBogotaYmd();
+        return {
+            and: [
+                { or: statusOr },
+                { property: "Fecha", date: { on_or_after: monthRange.startYmd } },
+                { property: "Fecha", date: { on_or_before: monthRange.endYmd } },
+            ],
+        };
+    }
+    return {
+        and: [{ or: statusOr }, { property: "Fecha", date: { before: todayYmd } }],
+    };
+}
+
+async function queryTasksForListCommand(commandKey) {
+    const dbId = String(process.env.NOTION_DATABASE_ID || "").trim();
+    if (!dbId) {
+        throw new Error("Falta NOTION_DATABASE_ID.");
+    }
+    const headers = notionHeadersOrThrow();
+    const filter = buildTaskFilterByCommand(commandKey);
+    const tasks = [];
+    let nextCursor = null;
+    do {
+        const body = {
+            page_size: 100,
+            filter,
+            // Orden estable: primero por Fecha ascendente, luego por created_time.
+            // Esto garantiza que el índice por página siga apuntando a la misma tarea
+            // al reconsultar, incluso tras reinicio del servidor.
+            sorts: [
+                { property: "Fecha", direction: "ascending" },
+                { timestamp: "created_time", direction: "ascending" },
+            ],
+        };
+        if (nextCursor) body.start_cursor = nextCursor;
+        const res = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+            throw new Error(`Error consultando tareas (${detail}).`);
+        }
+        const pages = Array.isArray(data?.results) ? data.results : [];
+        tasks.push(...pages.map(extractNotionTaskFromPage));
+        nextCursor = data.has_more ? data.next_cursor : null;
+    } while (nextCursor);
+    return tasks;
+}
+
+function formatTaskDateLabel(fechaYmd) {
+    const ymd = String(fechaYmd || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return "Pendiente";
+    const date = new Date(`${ymd}T12:00:00Z`);
+    return new Intl.DateTimeFormat("es-CO", {
+        day: "numeric",
+        month: "long",
+        timeZone: "America/Bogota",
+    }).format(date);
+}
+
+function escapeTelegramMarkdown(text) {
+    return String(text || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\*/g, "\\*")
+        .replace(/_/g, "\\_")
+        .replace(/\[/g, "\\[")
+        .replace(/`/g, "\\`");
+}
+
+function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
+    const { page: safePage, totalPages } = clampTaskListPage(pageZeroBased, tasks.length, pageSize);
+    const pageHuman = safePage + 1;
+    const header = `Página ${pageHuman} de ${totalPages}`;
+    if (!tasks.length) {
+        return { text: `${header}\n\n🔍 Sin pendientes.`, page: safePage, totalPages };
+    }
+    const start = safePage * pageSize;
+    const visible = tasks.slice(start, start + pageSize);
+    const body = visible
+        .map((task, idx) => {
+            const absoluteIndex = start + idx + 1;
+            const area = escapeTelegramMarkdown(task.area || "Sin Área");
+            const taskName = escapeTelegramMarkdown(task.name || "Sin título");
+            const dateLabel = formatTaskDateLabel(task.fechaYmd);
+            return `${absoluteIndex}. 🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
+        })
+        .join("\n\n");
+    return { text: `${header}\n\n${body}`, page: safePage, totalPages };
+}
+
+function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
+    const { page: safePage, totalPages } = clampTaskListPage(pageZeroBased, tasks.length, pageSize);
+    if (!tasks.length) return { inline_keyboard: [] };
+    const start = safePage * pageSize;
+    const visible = tasks.slice(start, start + pageSize);
+    const pageHuman = safePage + 1;
+    const rowOne = [];
+    const rowTwo = [];
+    for (let i = 0; i < visible.length; i += 1) {
+        const localIndex = i + 1;
+        const btn = {
+            text: String(localIndex),
+            callback_data: `pick_${localIndex}_${commandKey}_p${pageHuman}`,
+        };
+        if (localIndex <= 5) rowOne.push(btn);
+        else rowTwo.push(btn);
+    }
+    const rows = [];
+    if (rowOne.length) rows.push(rowOne);
+    if (rowTwo.length) rows.push(rowTwo);
+    if (tasks.length > pageSize) {
+        const prevPage = Math.max(1, pageHuman - 1);
+        const nextPage = Math.min(totalPages, pageHuman + 1);
+        rows.push([
+            { text: "⬅️ Ant", callback_data: `nav_p${prevPage}_${commandKey}` },
+            { text: "Sig ➡️", callback_data: `nav_p${nextPage}_${commandKey}` },
+        ]);
+    }
+    return { inline_keyboard: rows };
+}
+
+async function renderListCommandPage(token, chatId, commandKey, pageZeroBased, opts = {}) {
+    const tasks = await queryTasksForListCommand(commandKey);
+    const { text, page } = buildListCommandMessage(tasks, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
+    const keyboard = buildListCommandKeyboard(tasks, commandKey, page, COMMAND_TASKS_PAGE_SIZE);
+    if (opts.editMessageId != null) {
+        await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
+    } else {
+        await telegramSendMessage(token, chatId, text, keyboard);
+    }
+    if (opts.callbackQueryId) {
+        await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
+    }
 }
 
 /**
@@ -800,6 +1020,57 @@ module.exports = async function handler(req, res) {
 
     if (cb) {
         const cbData = cb.data || "";
+        const navMatch = cbData.match(/^nav_p(\d+)_([a-z]+)$/);
+        if (navMatch) {
+            const targetPageHuman = Number(navMatch[1]);
+            const commandKey = navMatch[2];
+            if (!LIST_COMMAND_KEYS.has(commandKey)) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Navegación inválida.");
+                return res.status(200).send("OK");
+            }
+            const safeHumanPage = Math.max(1, targetPageHuman || 1);
+            await renderListCommandPage(token, cb.message.chat.id, commandKey, safeHumanPage - 1, {
+                editMessageId: cb.message.message_id,
+                callbackQueryId: cb.id,
+            });
+            return res.status(200).send("OK");
+        }
+
+        const pickMatch = cbData.match(/^pick_(\d+)_([a-z]+)_p(\d+)$/);
+        if (pickMatch) {
+            const buttonIndex = Number(pickMatch[1]);
+            const commandKey = pickMatch[2];
+            const pageHuman = Number(pickMatch[3]);
+            if (!LIST_COMMAND_KEYS.has(commandKey)) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Selección inválida.");
+                return res.status(200).send("OK");
+            }
+            if (!Number.isInteger(buttonIndex) || buttonIndex < 1 || buttonIndex > COMMAND_TASKS_PAGE_SIZE) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Índice inválido.");
+                return res.status(200).send("OK");
+            }
+            const tasks = await queryTasksForListCommand(commandKey);
+            const taskIndex = (Math.max(1, pageHuman) - 1) * COMMAND_TASKS_PAGE_SIZE + (buttonIndex - 1);
+            const selectedTask = tasks[taskIndex];
+            if (!selectedTask?.id) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Esa tarea ya no está disponible.");
+                return res.status(200).send("OK");
+            }
+            const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedTask.id);
+            await telegramEditMessageText(
+                token,
+                cb.message.chat.id,
+                cb.message.message_id,
+                `🎯 ${taskIndex + 1}. ${escapeTelegramMarkdown(selectedTask.name)}\n¿Qué acción quieres ejecutar?`,
+                actionKeyboard
+            );
+            interactiveTaskActionContext.set(`${cb.message.chat.id}:${cb.message.message_id}`, {
+                pageId: selectedTask.id,
+                taskName: selectedTask.name,
+            });
+            await telegramAnswerCallbackQuery(token, cb.id);
+            return res.status(200).send("OK");
+        }
 
         if (MANAGE_TASK_PROMPTS[cbData]) {
             const forceReply = { force_reply: true, selective: true };
@@ -815,7 +1086,6 @@ module.exports = async function handler(req, res) {
 
         if (
             cbData.startsWith("itask_done:") ||
-            cbData.startsWith("itask_pause:") ||
             cbData.startsWith("itask_reschedule:") ||
             cbData.startsWith("itask_delete:")
         ) {
@@ -833,19 +1103,6 @@ module.exports = async function handler(req, res) {
                     result.ok
                         ? `✅ Tarea completada mi rey! Asi se hace! no le baje que ya casi!: ${result.taskName}`
                         : `❌ No pude completar la tarea mi papacho mala mia... pereme me ajusto y lo intentamos de nuevo! ${result.text || ""}`.trim()
-                );
-                await telegramAnswerCallbackQuery(token, cb.id);
-                return res.status(200).send("OK");
-            }
-
-            if (action === "itask_pause") {
-                const result = await updateNotionTaskStatus(pageId, "Pausado", true);
-                await telegramSendMessage(
-                    token,
-                    cb.message.chat.id,
-                    result.ok
-                        ? `⏸ Tarea pausada mi rey: ${result.taskName}`
-                        : `❌ No pude pausar la tarea, mijo, intentele de nuevo! ${result.text || ""}`.trim()
                 );
                 await telegramAnswerCallbackQuery(token, cb.id);
                 return res.status(200).send("OK");
@@ -1074,28 +1331,19 @@ module.exports = async function handler(req, res) {
                 return res.status(200).send("OK");
             }
             if (text === "/listad") {
-                const { tasks } = await getDailyTasks();
-                const messageText = `📅 Tareas de hoy:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_day"));
+                await renderListCommandPage(token, chatId, "listad", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/listas") {
-                const { tasks } = await getWeeklyTasks();
-                const messageText = `🗓️ Tareas de esta semana:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_week"));
+                await renderListCommandPage(token, chatId, "listas", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/listam") {
-                const { tasks } = await getMonthTasks();
-                const messageText = `🗓️ Tareas de este mes:\n${formatSequentialTaskStatusList(tasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_month"));
+                await renderListCommandPage(token, chatId, "listam", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/listav") {
-                const overduePages = await getOverdueTasks();
-                const overdueTasks = mapOverduePagesToTasks(overduePages);
-                const messageText = `⚠️ Tareas vencidas:\n${formatSequentialTaskStatusList(overdueTasks)}`;
-                await telegramSendMessage(token, chatId, messageText, buildInteractiveManageKeyboard("manage_overdue"));
+                await renderListCommandPage(token, chatId, "listav", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/syncminutas") {
