@@ -425,7 +425,7 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 
 /** Tareas por página en el teclado/lista; más de esto activa fila de paginación. */
 const TASKS_PAGE_SIZE = 8;
-const COMMAND_TASKS_PAGE_SIZE = 10;
+const COMMAND_TASKS_PAGE_SIZE = 6;
 const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
 const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listav"]);
 
@@ -596,14 +596,16 @@ function escapeTelegramMarkdown(text) {
 }
 
 function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
-    const { page: safePage, totalPages } = clampTaskListPage(pageZeroBased, tasks.length, pageSize);
+    const allTasks = Array.isArray(tasks) ? tasks : [];
+    const totalPages = Math.max(1, Math.ceil(allTasks.length / pageSize));
+    const { page: safePage } = clampTaskListPage(pageZeroBased, allTasks.length, pageSize);
     const pageHuman = safePage + 1;
-    const header = `Página ${pageHuman} de ${totalPages}`;
-    if (!tasks.length) {
-        return { text: `${header}\n\n🔍 Sin pendientes.`, page: safePage, totalPages };
+    const header = `📄 Página ${pageHuman} de ${totalPages}\n\n`;
+    if (!allTasks.length) {
+        return { text: `${header}🔍 Sin pendientes. Asi que rela mi rey!`, page: safePage, totalPages };
     }
     const start = safePage * pageSize;
-    const visible = tasks.slice(start, start + pageSize);
+    const visible = allTasks.slice(start, start + pageSize);
     const body = visible
         .map((task, idx) => {
             const absoluteIndex = start + idx + 1;
@@ -613,7 +615,7 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
             return `${absoluteIndex}. 🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
         })
         .join("\n\n");
-    return { text: `${header}\n\n${body}`, page: safePage, totalPages };
+    return { text: `${header}${body}`, page: safePage, totalPages };
 }
 
 function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
@@ -630,13 +632,13 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
             text: String(localIndex),
             callback_data: `pick_${localIndex}_${commandKey}_p${pageHuman}`,
         };
-        if (localIndex <= 5) rowOne.push(btn);
+        if (localIndex <= 3) rowOne.push(btn);
         else rowTwo.push(btn);
     }
     const rows = [];
     if (rowOne.length) rows.push(rowOne);
     if (rowTwo.length) rows.push(rowTwo);
-    if (tasks.length > pageSize) {
+    if (totalPages > 1) {
         const prevPage = Math.max(1, pageHuman - 1);
         const nextPage = Math.min(totalPages, pageHuman + 1);
         rows.push([
