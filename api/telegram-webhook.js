@@ -411,6 +411,18 @@ async function telegramEditMessageText(token, chatId, messageId, text, replyMark
     });
 }
 
+async function telegramDeleteMessage(token, chatId, messageId) {
+    await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+    });
+}
+
+function clearInteractiveTaskActionContext(chatId, messageId) {
+    interactiveTaskActionContext.delete(`${chatId}:${messageId}`);
+}
+
 async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", showAlert = false) {
     await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
         method: "POST",
@@ -1060,14 +1072,13 @@ module.exports = async function handler(req, res) {
                 return res.status(200).send("OK");
             }
             const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedTask.id);
-            await telegramEditMessageText(
+            const actionMsg = await telegramSendMessageAndGetResult(
                 token,
                 cb.message.chat.id,
-                cb.message.message_id,
-                `🎯 ${taskIndex + 1}. ${escapeTelegramMarkdown(selectedTask.name)}\n¿Qué acción quieres ejecutar?`,
+                `🎯 ${taskIndex + 1}. ${escapeTelegramMarkdown(selectedTask.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
                 actionKeyboard
             );
-            interactiveTaskActionContext.set(`${cb.message.chat.id}:${cb.message.message_id}`, {
+            interactiveTaskActionContext.set(`${cb.message.chat.id}:${actionMsg.message_id}`, {
                 pageId: selectedTask.id,
                 taskName: selectedTask.name,
             });
@@ -1098,11 +1109,18 @@ module.exports = async function handler(req, res) {
                 return res.status(200).send("OK");
             }
 
+            const chatId = cb.message.chat.id;
+            const actionMessageId = cb.message.message_id;
+
             if (action === "itask_done") {
-                const result = await updateNotionTaskStatus(pageId, "Hecho", true);
+                const result = await updateNotionTaskStatus(pageId, "Hecho! hagale que todo bien mijo!", true);
+                if (result.ok) {
+                    await telegramDeleteMessage(token, chatId, actionMessageId);
+                    clearInteractiveTaskActionContext(chatId, actionMessageId);
+                }
                 await telegramSendMessage(
                     token,
-                    cb.message.chat.id,
+                    chatId,
                     result.ok
                         ? `✅ Tarea completada mi rey! Asi se hace! no le baje que ya casi!: ${result.taskName}`
                         : `❌ No pude completar la tarea mi papacho mala mia... pereme me ajusto y lo intentamos de nuevo! ${result.text || ""}`.trim()
@@ -1113,10 +1131,15 @@ module.exports = async function handler(req, res) {
 
             if (action === "itask_delete") {
                 const reply = await deleteNotionTask(pageId, true);
+                const failed = String(reply || "").startsWith("❌");
+                if (!failed) {
+                    await telegramDeleteMessage(token, chatId, actionMessageId);
+                    clearInteractiveTaskActionContext(chatId, actionMessageId);
+                }
                 await telegramSendMessage(
                     token,
-                    cb.message.chat.id,
-                    String(reply || "").startsWith("❌")
+                    chatId,
+                    failed
                         ? `${reply} Tranqui mi rey lo intentamos de nuevo para antier!`
                         : `${reply} Listo mi papacho usted sabe como soy yo!`
                 );
@@ -1124,19 +1147,20 @@ module.exports = async function handler(req, res) {
                 return res.status(200).send("OK");
             }
 
-            const actionKey = `${cb.message.chat.id}:${cb.message.message_id}`;
+            const actionKey = `${chatId}:${actionMessageId}`;
             const taskCtx = interactiveTaskActionContext.get(actionKey) || null;
             const forceReply = { force_reply: true, selective: true };
             const promptMsg = await telegramSendMessageAndGetResult(
                 token,
-                cb.message.chat.id,
+                chatId,
                 MANAGE_TASK_RESCHEDULE_PROMPT,
                 forceReply
             );
-            const ctxKey = `${cb.message.chat.id}:${promptMsg.message_id}`;
+            const ctxKey = `${chatId}:${promptMsg.message_id}`;
             interactiveRescheduleContext.set(ctxKey, {
                 pageId,
                 taskName: taskCtx?.taskName || "Tarea",
+                actionMessageId,
             });
             await telegramAnswerCallbackQuery(token, cb.id);
             return res.status(200).send("OK");
@@ -1265,6 +1289,10 @@ module.exports = async function handler(req, res) {
                     return res.status(200).send("OK");
                 }
                 interactiveRescheduleContext.delete(ctxKey);
+                if (ctx.actionMessageId != null) {
+                    await telegramDeleteMessage(token, chatId, ctx.actionMessageId);
+                    clearInteractiveTaskActionContext(chatId, ctx.actionMessageId);
+                }
                 await telegramSendMessage(
                     token,
                     chatId,

@@ -179,3 +179,94 @@ test("selección por número usa la lista correcta según prompt", async () => {
     assert.equal(calls.month, 1);
     assert.equal(calls.overdue, 1);
 });
+
+test("pick_ en lista envía mensaje de acción sin editar la lista", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    process.env.NOTION_TOKEN = "notion-test";
+    process.env.NOTION_DATABASE_ID = "db-test";
+    const apiCalls = [];
+
+    global.fetch = async (url, options = {}) => {
+        const urlStr = String(url);
+        const endpoint = urlStr.split("/").pop();
+        const body = options.body ? JSON.parse(options.body) : {};
+        if (urlStr.includes("notion.com")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    results: [
+                        {
+                            id: "d1",
+                            properties: {
+                                Name: { title: [{ plain_text: "Daily 1" }] },
+                                Area: { select: { name: "Work" } },
+                                Fecha: { date: { start: "2026-05-19" } },
+                                Estado: { select: { name: "Pendiente" } },
+                            },
+                        },
+                    ],
+                    has_more: false,
+                }),
+            };
+        }
+        apiCalls.push({ endpoint, body });
+        if (endpoint === "sendMessage") {
+            return { ok: true, json: async () => ({ ok: true, result: { message_id: 901 } }) };
+        }
+        return { ok: true, json: async () => ({ ok: true }) };
+    };
+
+    const handler = loadHandler();
+
+    const req = {
+        method: "POST",
+        body: {
+            callback_query: {
+                id: "cb-pick",
+                data: "pick_1_listad_p1",
+                message: { chat: { id: 42 }, message_id: 50 },
+            },
+        },
+    };
+    const res = createMockRes();
+    await handler(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(!apiCalls.some((c) => c.endpoint === "editMessageText"));
+    const send = apiCalls.find((c) => c.endpoint === "sendMessage");
+    assert.ok(send);
+    assert.match(send.body.text, /Daily 1/);
+    assert.equal(send.body.reply_markup.inline_keyboard[0][0].callback_data, "itask_done:d1");
+});
+
+test("itask_done exitoso elimina el mensaje de acción", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    const apiCalls = [];
+
+    global.fetch = async (url, options = {}) => {
+        const endpoint = String(url).split("/").pop();
+        const body = options.body ? JSON.parse(options.body) : {};
+        apiCalls.push({ endpoint, body });
+        return { ok: true, json: async () => ({ ok: true }) };
+    };
+
+    const handler = loadHandler();
+    const req = {
+        method: "POST",
+        body: {
+            callback_query: {
+                id: "cb-done",
+                data: "itask_done:page-1",
+                message: { chat: { id: 7 }, message_id: 88 },
+            },
+        },
+    };
+    const res = createMockRes();
+    await handler(req, res);
+
+    assert.equal(res.statusCode, 200);
+    const deleted = apiCalls.find((c) => c.endpoint === "deleteMessage");
+    assert.ok(deleted);
+    assert.equal(deleted.body.chat_id, 7);
+    assert.equal(deleted.body.message_id, 88);
+});
