@@ -12,6 +12,9 @@ const {
     getOverdueTasks,
     rescheduleTaskDateByPageId,
     updateNotionTaskStatus,
+    updateNotionProyectoEstado,
+    queryNotionPlanProjects,
+    PLAN_STATUS_COMPLETED,
     deleteNotionTask,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
@@ -53,7 +56,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.7.9
+📖 Manual de Aura AI v2.8.0
 
 🛠 Gestión de Tareas
 
@@ -65,6 +68,7 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.
 /listas → Ver tareas de la semana actual
 /listam → Ver tareas del mes actual
 /listav → Ver tareas vencidas
+/plan → Ver plan de proyectos (pendientes por fecha de ejecución)
 
 /reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual
 
@@ -74,7 +78,7 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 📝 Notas y Hábitos
 
-Nota/ [Texto] → Envía a Inbox
+/Nota/ [Texto] → Envía a Inbox
 Habito/ [Nombre] → Marca hábito hoy
 
 💰 Finanzas
@@ -89,6 +93,7 @@ const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
 const interactiveTaskActionContext = new Map();
+const interactivePlanActionContext = new Map();
 const interactiveRescheduleContext = new Map();
 const MANAGE_TASK_PROMPTS = {
     manage_day: "¿Qué número de la lista diaria quieres gestionar mi papacho?",
@@ -110,6 +115,17 @@ function buildInteractiveTaskActionsKeyboard(pageId) {
                 { text: "✅ Done", callback_data: `itask_done:${pageId}` },
                 { text: "📅 Reprogramar", callback_data: `itask_reschedule:${pageId}` },
                 { text: "🗑 Borrar", callback_data: `itask_delete:${pageId}` }
+            ],
+        ],
+    };
+}
+
+function buildInteractivePlanActionsKeyboard(pageId) {
+    return {
+        inline_keyboard: [
+            [
+                { text: "✅ Completar", callback_data: `iproj_done:${pageId}` },
+                { text: "✖️ Cerrar menú", callback_data: `iproj_close:${pageId}` },
             ],
         ],
     };
@@ -423,6 +439,10 @@ function clearInteractiveTaskActionContext(chatId, messageId) {
     interactiveTaskActionContext.delete(`${chatId}:${messageId}`);
 }
 
+function clearInteractivePlanActionContext(chatId, messageId) {
+    interactivePlanActionContext.delete(`${chatId}:${messageId}`);
+}
+
 async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", showAlert = false) {
     await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
         method: "POST",
@@ -439,7 +459,7 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 const TASKS_PAGE_SIZE = 8;
 const COMMAND_TASKS_PAGE_SIZE = 6;
 const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
-const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listav"]);
+const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listav", "plan"]);
 
 /**
  * @param {number} page Página 0-based solicitada.
@@ -548,6 +568,13 @@ function buildTaskFilterByCommand(commandKey) {
     };
 }
 
+async function queryItemsForPaginatedList(commandKey) {
+    if (commandKey === "plan") {
+        return queryNotionPlanProjects();
+    }
+    return queryTasksForListCommand(commandKey);
+}
+
 async function queryTasksForListCommand(commandKey) {
     const dbId = String(process.env.NOTION_DATABASE_ID || "").trim();
     if (!dbId) {
@@ -607,6 +634,29 @@ function escapeTelegramMarkdown(text) {
         .replace(/`/g, "\\`");
 }
 
+function buildPlanListMessage(projects, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
+    const allItems = Array.isArray(projects) ? projects : [];
+    const totalPages = Math.max(1, Math.ceil(allItems.length / pageSize));
+    const { page: safePage } = clampTaskListPage(pageZeroBased, allItems.length, pageSize);
+    const pageHuman = safePage + 1;
+    const header = `📋 Plan de proyectos — Página ${pageHuman} de ${totalPages}\n\n`;
+    if (!allItems.length) {
+        return { text: `${header}🔍 Sin proyectos pendientes. Asi que rela mi rey!`, page: safePage, totalPages };
+    }
+    const start = safePage * pageSize;
+    const visible = allItems.slice(start, start + pageSize);
+    const body = visible
+        .map((item, idx) => {
+            const absoluteIndex = start + idx + 1;
+            const name = escapeTelegramMarkdown(item.name || "Sin título");
+            const dateLabel = formatTaskDateLabel(item.fechaYmd);
+            const tipo = escapeTelegramMarkdown(item.tipo || "Sin tipo");
+            return `${absoluteIndex}. 🔹 ${name}\n📅 *${dateLabel}*\n🏷️ *${tipo}*`;
+        })
+        .join("\n\n");
+    return { text: `${header}${body}`, page: safePage, totalPages };
+}
+
 function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
     const allTasks = Array.isArray(tasks) ? tasks : [];
     const totalPages = Math.max(1, Math.ceil(allTasks.length / pageSize));
@@ -663,9 +713,12 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
 }
 
 async function renderListCommandPage(token, chatId, commandKey, pageZeroBased, opts = {}) {
-    const tasks = await queryTasksForListCommand(commandKey);
-    const { text, page } = buildListCommandMessage(tasks, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
-    const keyboard = buildListCommandKeyboard(tasks, commandKey, page, COMMAND_TASKS_PAGE_SIZE);
+    const items = await queryItemsForPaginatedList(commandKey);
+    const { text, page } =
+        commandKey === "plan"
+            ? buildPlanListMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE)
+            : buildListCommandMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
+    const keyboard = buildListCommandKeyboard(items, commandKey, page, COMMAND_TASKS_PAGE_SIZE);
     if (opts.editMessageId != null) {
         await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
     } else {
@@ -1064,24 +1117,78 @@ module.exports = async function handler(req, res) {
                 await telegramAnswerCallbackQuery(token, cb.id, "Índice inválido.");
                 return res.status(200).send("OK");
             }
-            const tasks = await queryTasksForListCommand(commandKey);
-            const taskIndex = (Math.max(1, pageHuman) - 1) * COMMAND_TASKS_PAGE_SIZE + (buttonIndex - 1);
-            const selectedTask = tasks[taskIndex];
-            if (!selectedTask?.id) {
-                await telegramAnswerCallbackQuery(token, cb.id, "Esa tarea ya no está disponible.");
+            const items = await queryItemsForPaginatedList(commandKey);
+            const itemIndex = (Math.max(1, pageHuman) - 1) * COMMAND_TASKS_PAGE_SIZE + (buttonIndex - 1);
+            const selectedItem = items[itemIndex];
+            if (!selectedItem?.id) {
+                await telegramAnswerCallbackQuery(
+                    token,
+                    cb.id,
+                    commandKey === "plan" ? "Ese proyecto ya no está disponible. Meta bien el dedo mijo" : "Esa tarea ya no está disponible.  Meta bien el dedo mijo"
+                );
                 return res.status(200).send("OK");
             }
-            const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedTask.id);
-            const actionMsg = await telegramSendMessageAndGetResult(
+            const chatId = cb.message.chat.id;
+            if (commandKey === "plan") {
+                const dateLabel = formatTaskDateLabel(selectedItem.fechaYmd);
+                const tipo = escapeTelegramMarkdown(selectedItem.tipo || "Sin tipo");
+                const actionKeyboard = buildInteractivePlanActionsKeyboard(selectedItem.id);
+                const actionMsg = await telegramSendMessageAndGetResult(
+                    token,
+                    chatId,
+                    `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n📅 *${dateLabel}*\n🏷️ *${tipo}*\n¿Qué acción quieres ejecutar?`,
+                    actionKeyboard
+                );
+                interactivePlanActionContext.set(`${chatId}:${actionMsg.message_id}`, {
+                    pageId: selectedItem.id,
+                    itemName: selectedItem.name,
+                });
+            } else {
+                const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedItem.id);
+                const actionMsg = await telegramSendMessageAndGetResult(
+                    token,
+                    chatId,
+                    `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
+                    actionKeyboard
+                );
+                interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
+                    pageId: selectedItem.id,
+                    taskName: selectedItem.name,
+                });
+            }
+            await telegramAnswerCallbackQuery(token, cb.id);
+            return res.status(200).send("OK");
+        }
+
+        if (cbData.startsWith("iproj_done:") || cbData.startsWith("iproj_close:")) {
+            const [action, pageId] = cbData.split(":");
+            const chatId = cb.message.chat.id;
+            const actionMessageId = cb.message.message_id;
+
+            if (action === "iproj_close") {
+                await telegramDeleteMessage(token, chatId, actionMessageId);
+                clearInteractivePlanActionContext(chatId, actionMessageId);
+                await telegramAnswerCallbackQuery(token, cb.id);
+                return res.status(200).send("OK");
+            }
+
+            if (!pageId) {
+                await telegramAnswerCallbackQuery(token, cb.id, "No pude identificar el proyecto.");
+                return res.status(200).send("OK");
+            }
+
+            const result = await updateNotionProyectoEstado(pageId, PLAN_STATUS_COMPLETED);
+            if (result.ok) {
+                await telegramDeleteMessage(token, chatId, actionMessageId);
+                clearInteractivePlanActionContext(chatId, actionMessageId);
+            }
+            await telegramSendMessage(
                 token,
-                cb.message.chat.id,
-                `🎯 ${taskIndex + 1}. ${escapeTelegramMarkdown(selectedTask.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
-                actionKeyboard
+                chatId,
+                result.ok
+                    ? `✅ Proyecto completado mi rey!: ${result.itemName}`
+                    : `${result.text} Tranqui mi papacho lo intentamos de nuevo!`
             );
-            interactiveTaskActionContext.set(`${cb.message.chat.id}:${actionMsg.message_id}`, {
-                pageId: selectedTask.id,
-                taskName: selectedTask.name,
-            });
             await telegramAnswerCallbackQuery(token, cb.id);
             return res.status(200).send("OK");
         }
@@ -1375,6 +1482,10 @@ module.exports = async function handler(req, res) {
             }
             if (text === "/listav") {
                 await renderListCommandPage(token, chatId, "listav", 0);
+                return res.status(200).send("OK");
+            }
+            if (text === "/plan") {
+                await renderListCommandPage(token, chatId, "plan", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/syncminutas") {

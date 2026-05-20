@@ -35,7 +35,15 @@ const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
 const PROP_EXPENSE_FECHA = 'Fecha de gasto';
 const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
 const notionActividadesProyectosId = (process.env.NOTION_ACTIVIDADES_PROYECTOS_ID || '').trim();
+const notionProyectoDbId = (process.env.NOTION_DB_PROYECTO_ID || '').trim();
 const notionToken = (process.env.NOTION_TOKEN || '').trim();
+
+const PROP_PROYECTO_NAME = 'Name';
+const PROP_PROYECTO_ESTADO = 'Estado';
+const PROP_PROYECTO_FECHA_EJECUCION = 'Fecha de Ejecución';
+const PROP_PROYECTO_TIPO = 'Tipo';
+const PLAN_STATUS_DONE_VALUES = ['Hecho', 'Completado', 'Done', 'Cumplida'];
+const PLAN_STATUS_COMPLETED = 'Completado';
 
 const NOTION_UUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
 
@@ -737,6 +745,116 @@ async function updateNotionTaskStatus(searchNameOrId, newStatus, isId = false) {
  * @param {string} newStatus
  * @returns {Promise<any>} Página de Notion actualizada.
  */
+function notionRichTextToPlain(richText) {
+    if (!Array.isArray(richText)) return '';
+    return richText.map((t) => t?.plain_text || '').join('').trim();
+}
+
+function extractPlanProjectFromNotionPage(page) {
+    const props = page?.properties || {};
+    const title = notionRichTextToPlain(props[PROP_PROYECTO_NAME]?.title) || 'Sin título';
+    const fecha = props[PROP_PROYECTO_FECHA_EJECUCION]?.date?.start || '';
+    const tipo = props[PROP_PROYECTO_TIPO]?.select?.name || 'Sin tipo';
+    const status = props[PROP_PROYECTO_ESTADO]?.select?.name || '---';
+    return {
+        id: page?.id || '',
+        name: title,
+        fechaYmd: fecha,
+        tipo,
+        status,
+    };
+}
+
+function buildPlanProjectsNotionFilter() {
+    return {
+        and: PLAN_STATUS_DONE_VALUES.map((statusName) => ({
+            property: PROP_PROYECTO_ESTADO,
+            select: { does_not_equal: statusName },
+        })),
+    };
+}
+
+/**
+ * Proyectos activos (NOTION_DB_PROYECTO_ID), ordenados por Fecha de Ejecución ascendente.
+ * @returns {Promise<{ id: string, name: string, fechaYmd: string, tipo: string, status: string }[]>}
+ */
+async function queryNotionPlanProjects() {
+    if (!notionProyectoDbId) {
+        throw new Error('Falta NOTION_DB_PROYECTO_ID.');
+    }
+    if (!notionToken) {
+        throw new Error('Falta NOTION_TOKEN.');
+    }
+    const items = [];
+    let nextCursor = null;
+    do {
+        const body = {
+            page_size: 100,
+            filter: buildPlanProjectsNotionFilter(),
+            sorts: [{ property: PROP_PROYECTO_FECHA_EJECUCION, direction: 'ascending' }],
+        };
+        if (nextCursor) body.start_cursor = nextCursor;
+        const res = await fetch(`https://api.notion.com/v1/databases/${notionProyectoDbId}/query`, {
+            method: 'POST',
+            headers: NOTION_HEADERS,
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+            throw new Error(`Error consultando plan de proyectos (${detail}).`);
+        }
+        const pages = Array.isArray(data?.results) ? data.results : [];
+        items.push(...pages.map(extractPlanProjectFromNotionPage));
+        nextCursor = data.has_more ? data.next_cursor : null;
+    } while (nextCursor);
+    return items;
+}
+
+/**
+ * @returns {{ ok: true, text: string, itemName: string } | { ok: false, text: string }}
+ */
+async function updateNotionProyectoEstado(pageId, newStatus) {
+    const id = String(pageId || '').trim();
+    const status = String(newStatus || '').trim();
+    if (!id || !NOTION_UUID_RE.test(id)) {
+        return { ok: false, text: '❌ pageId inválido.' };
+    }
+    if (!status) {
+        return { ok: false, text: '❌ Estado inválido.' };
+    }
+    if (!notionToken) {
+        return { ok: false, text: '❌ Falta NOTION_TOKEN.' };
+    }
+    const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+        method: 'PATCH',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({
+            properties: {
+                [PROP_PROYECTO_ESTADO]: { select: { name: status } },
+            },
+        }),
+    });
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) {
+            /* ignore */
+        }
+        return { ok: false, text: `❌ Error Notion (${detail}).` };
+    }
+    const data = await res.json();
+    const nameFromPage =
+        notionRichTextToPlain(data?.properties?.[PROP_PROYECTO_NAME]?.title) || 'Proyecto';
+    return {
+        ok: true,
+        text: `✅ Proyecto actualizado a ${status}`,
+        itemName: nameFromPage,
+    };
+}
+
 async function updateTaskStatus(pageId, newStatus) {
     const id = String(pageId || '').trim();
     const status = String(newStatus || '').trim();
@@ -1485,4 +1603,7 @@ module.exports = {
     getCompletedTasksTodayBogota,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
+    queryNotionPlanProjects,
+    updateNotionProyectoEstado,
+    PLAN_STATUS_COMPLETED,
 };
