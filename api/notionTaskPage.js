@@ -42,7 +42,6 @@ const PROP_PROYECTO_NAME = 'Name';
 const PROP_PROYECTO_ESTADO = 'Estado';
 const PROP_PROYECTO_FECHA_EJECUCION = 'Fecha de Ejecución';
 const PROP_PROYECTO_TIPO = 'Tipo';
-const PLAN_STATUS_DONE_VALUES = ['Hecho', 'Completado', 'Done', 'Cumplida'];
 const PLAN_STATUS_COMPLETED = 'Completado';
 
 const NOTION_UUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
@@ -767,10 +766,8 @@ function extractPlanProjectFromNotionPage(page) {
 
 function buildPlanProjectsNotionFilter() {
     return {
-        and: PLAN_STATUS_DONE_VALUES.map((statusName) => ({
-            property: PROP_PROYECTO_ESTADO,
-            select: { does_not_equal: statusName },
-        })),
+        property: PROP_PROYECTO_ESTADO,
+        select: { does_not_equal: PLAN_STATUS_COMPLETED },
     };
 }
 
