@@ -56,7 +56,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.8.0
+📖 Manual de Aura AI v2.8.1
 
 🛠 Gestión de Tareas
 

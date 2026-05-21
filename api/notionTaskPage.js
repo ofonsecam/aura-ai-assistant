@@ -148,6 +148,12 @@ function isTaskStatusCompleted(status) {
     return TASK_STATUS_DONE_VALUES.includes(String(status || "").trim());
 }
 
+/** Marca de cierre: select 'Hecho' (u otros valores canónicos) o variantes que empiezan por "Hecho". */
+function isTaskCompletionIntent(status) {
+    const s = String(status || "").trim();
+    return isTaskStatusCompleted(s) || /^hecho/i.test(s);
+}
+
 /**
  * Partes de calendario (año, mes, día) de "ahora" en America/Bogota.
  * Equivalente en Python: `datetime.now(ZoneInfo("America/Bogota")).date()`.
@@ -862,12 +868,15 @@ async function updateTaskStatus(pageId, newStatus) {
         throw new Error('newStatus inválido.');
     }
 
+    const completing = isTaskCompletionIntent(status);
+    const notionEstado = completing ? 'Hecho' : status;
+
     const properties = {
-        [PROP_TASK_ESTADO]: { select: { name: status } },
+        [PROP_TASK_ESTADO]: { select: { name: notionEstado } },
     };
-    if (isTaskStatusCompleted(status)) {
+    if (completing) {
         properties[PROP_TASK_FECHA_CIERRE] = {
-            date: { start: getNowBogotaIsoForNotionDateTime() },
+            date: { start: new Date().toISOString() },
         };
     } else {
         properties[PROP_TASK_FECHA_CIERRE] = { date: null };
