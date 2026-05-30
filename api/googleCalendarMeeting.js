@@ -232,7 +232,7 @@ async function createGoogleCalendarMeetingEvent(meeting) {
         };
 
         const response = await clientResult.calendar.events.insert({
-            calendarId: clientResult.calendarId.trim(),
+            calendarId: 'aqui_tu_correo_real@gmail.com',
             requestBody: eventData,
         });
 
@@ -243,12 +243,8 @@ async function createGoogleCalendarMeetingEvent(meeting) {
             startDateTime: buildGoogleDateTime(start),
             endDateTime: buildGoogleDateTime(end),
         };
-    } catch (err) {
-        const detail = err?.response?.data?.error?.message || err?.message || String(err);
-        return {
-            ok: false,
-            error: `❌ No pude crear el evento en Google Calendar: ${detail}`,
-        };
+    } catch (error) {
+        throw new Error("NUEVO ERROR API: " + error.message);
     }
 }
 
