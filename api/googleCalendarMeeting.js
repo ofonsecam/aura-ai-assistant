@@ -178,18 +178,16 @@ function getGoogleCalendarClient() {
     const privateKeyEnv = process.env.GOOGLE_PRIVATE_KEY;
 
     if (!clientEmail || !privateKeyEnv) {
-        throw new Error("Error fatal: GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY no están definidas en el entorno (Vercel).");
+        throw new Error("Error fatal: GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY no están definidas.");
     }
 
-    // Formateo seguro de la llave
-    const formattedPrivateKey = privateKeyEnv.replace(/\\n/g, '\n');
-
-    const auth = new google.auth.JWT(
-        clientEmail,
-        null,
-        formattedPrivateKey,
-        ['https://www.googleapis.com/auth/calendar']
-    );
+    const auth = new google.auth.GoogleAuth({
+        credentials: {
+            client_email: clientEmail,
+            private_key: privateKeyEnv.replace(/\\n/g, '\n'),
+        },
+        scopes: ['https://www.googleapis.com/auth/calendar'],
+    });
 
     const calendar = google.calendar({ version: 'v3', auth: auth });
 
