@@ -174,21 +174,19 @@ function getGoogleCalendarClient() {
         return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_CALENDAR_ID para conectar con Google Calendar." };
     }
 
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    let privateKeyEnv = process.env.GOOGLE_PRIVATE_KEY;
+    const jsonEnv = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
-    if (!clientEmail || !privateKeyEnv) {
-        throw new Error("Error fatal: GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY no están definidas.");
+    if (!jsonEnv) {
+        throw new Error("Error fatal: GOOGLE_SERVICE_ACCOUNT_JSON no está definida en Vercel.");
     }
 
-    // Limpieza extrema: elimina comillas al inicio/fin y convierte saltos de línea
-    privateKeyEnv = privateKeyEnv.replace(/^"|"$/g, '');
-    privateKeyEnv = privateKeyEnv.replace(/\\n/g, '\n');
+    // Parseamos el JSON completo de forma nativa, lo que resuelve cualquier problema de escape de caracteres (\n)
+    const credentials = JSON.parse(jsonEnv);
 
     const auth = new google.auth.GoogleAuth({
         credentials: {
-            client_email: clientEmail,
-            private_key: privateKeyEnv,
+            client_email: credentials.client_email,
+            private_key: credentials.private_key,
         },
         scopes: ['https://www.googleapis.com/auth/calendar'],
     });
