@@ -244,7 +244,7 @@ async function createGoogleCalendarMeetingEvent(meeting) {
             endDateTime: buildGoogleDateTime(end),
         };
     } catch (error) {
-        throw new Error("NUEVO ERROR API: " + error.message);
+        throw new Error(`NUEVO ERROR API: ${error.message} - Intentando en ID: [${process.env.GOOGLE_CALENDAR_ID}]`);
     }
 }
 
