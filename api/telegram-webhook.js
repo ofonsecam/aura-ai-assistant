@@ -21,6 +21,7 @@ const {
     parseTaskText,
     taskDateToBogotaYmd,
 } = require("./notionTaskPage");
+const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
@@ -56,7 +57,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.8.1
+📖 Manual de Aura AI v2.8.2
 
 🛠 Gestión de Tareas
 
@@ -80,6 +81,11 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 /Nota/ [Texto] → Envía a Inbox
 Habito/ [Nombre] → Marca hábito hoy
+
+📅 Google Calendar
+
+meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento (duración en horas; default 0.5)
+Ejemplo: meeting/ 05 30 2026 14:30 1.5 Entrevista con Handoff
 
 💰 Finanzas
 
@@ -1429,6 +1435,10 @@ module.exports = async function handler(req, res) {
         }
 
         if (await tryHandleHabitSlashCommand(token, chatId, text)) {
+            return res.status(200).send("OK");
+        }
+
+        if (await tryHandleMeetingSlashCommand(token, chatId, text, telegramSendMessage)) {
             return res.status(200).send("OK");
         }
 
