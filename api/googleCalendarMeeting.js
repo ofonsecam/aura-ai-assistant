@@ -191,10 +191,12 @@ function getGoogleCalendarClient() {
         ['https://www.googleapis.com/auth/calendar']
     );
 
+    const calendar = google.calendar({ version: 'v3', auth: auth });
+
     return {
         ok: true,
         calendarId,
-        calendar: google.calendar({ version: "v3", auth }),
+        calendar,
     };
 }
 
@@ -221,19 +223,21 @@ async function createGoogleCalendarMeetingEvent(meeting) {
     });
 
     try {
-        const response = await clientResult.calendar.events.insert({
-            calendarId: clientResult.calendarId,
-            requestBody: {
-                summary: meeting.title,
-                start: {
-                    dateTime: buildGoogleDateTime(start),
-                    timeZone: BOGOTA_TZ,
-                },
-                end: {
-                    dateTime: buildGoogleDateTime(end),
-                    timeZone: BOGOTA_TZ,
-                },
+        const eventData = {
+            summary: meeting.title,
+            start: {
+                dateTime: buildGoogleDateTime(start),
+                timeZone: BOGOTA_TZ,
             },
+            end: {
+                dateTime: buildGoogleDateTime(end),
+                timeZone: BOGOTA_TZ,
+            },
+        };
+
+        const response = await clientResult.calendar.events.insert({
+            calendarId: process.env.GOOGLE_CALENDAR_ID,
+            resource: eventData,
         });
 
         return {
