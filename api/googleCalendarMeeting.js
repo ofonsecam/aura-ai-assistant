@@ -169,18 +169,14 @@ function buildGoogleDateTime({ year, month, day, hour, minute }) {
 }
 
 function getGoogleCalendarClient() {
-    const calendarId = String(process.env.GOOGLE_CALENDAR_ID || "").trim();
-    if (!calendarId) {
-        return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_CALENDAR_ID para conectar con Google Calendar." };
-    }
-
     const jsonEnv = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    const calendarId = process.env.GOOGLE_CALENDAR_ID;
 
-    if (!jsonEnv) {
-        throw new Error("Error fatal: GOOGLE_SERVICE_ACCOUNT_JSON no está definida en Vercel.");
+    // Validación estricta antes de proceder
+    if (!jsonEnv || !calendarId) {
+        throw new Error(`Error fatal: Variables de entorno faltantes. JSON_PROVISTO: ${!!jsonEnv}, CALENDAR_ID_PROVISTO: ${!!calendarId}`);
     }
 
-    // Parseamos el JSON completo de forma nativa, lo que resuelve cualquier problema de escape de caracteres (\n)
     const credentials = JSON.parse(jsonEnv);
 
     const auth = new google.auth.GoogleAuth({
@@ -236,8 +232,8 @@ async function createGoogleCalendarMeetingEvent(meeting) {
         };
 
         const response = await clientResult.calendar.events.insert({
-            calendarId: process.env.GOOGLE_CALENDAR_ID,
-            resource: eventData,
+            calendarId: clientResult.calendarId.trim(),
+            requestBody: eventData,
         });
 
         return {
