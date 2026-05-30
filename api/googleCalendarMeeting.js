@@ -175,16 +175,20 @@ function getGoogleCalendarClient() {
     }
 
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKeyEnv = process.env.GOOGLE_PRIVATE_KEY;
+    let privateKeyEnv = process.env.GOOGLE_PRIVATE_KEY;
 
     if (!clientEmail || !privateKeyEnv) {
         throw new Error("Error fatal: GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY no están definidas.");
     }
 
+    // Limpieza extrema: elimina comillas al inicio/fin y convierte saltos de línea
+    privateKeyEnv = privateKeyEnv.replace(/^"|"$/g, '');
+    privateKeyEnv = privateKeyEnv.replace(/\\n/g, '\n');
+
     const auth = new google.auth.GoogleAuth({
         credentials: {
             client_email: clientEmail,
-            private_key: privateKeyEnv.replace(/\\n/g, '\n'),
+            private_key: privateKeyEnv,
         },
         scopes: ['https://www.googleapis.com/auth/calendar'],
     });
