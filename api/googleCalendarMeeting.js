@@ -232,7 +232,7 @@ async function createGoogleCalendarMeetingEvent(meeting) {
         };
 
         const response = await clientResult.calendar.events.insert({
-            calendarId: 'primary',
+            calendarId: 'process.env.GOOGLE_CALENDAR_ID',
             requestBody: eventData,
         });
 
