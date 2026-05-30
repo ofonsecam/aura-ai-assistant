@@ -170,14 +170,12 @@ function buildGoogleDateTime({ year, month, day, hour, minute }) {
 
 function getGoogleCalendarClient() {
     const clientEmail = String(process.env.GOOGLE_CLIENT_EMAIL || "").trim();
-    const rawKey = String(process.env.GOOGLE_PRIVATE_KEY || "");
-    const privateKey = rawKey.replace(/\\n/g, "\n").trim();
     const calendarId = String(process.env.GOOGLE_CALENDAR_ID || "").trim();
 
     if (!clientEmail) {
         return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_CLIENT_EMAIL para conectar con Google Calendar." };
     }
-    if (!privateKey) {
+    if (!String(process.env.GOOGLE_PRIVATE_KEY || "").trim()) {
         return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_PRIVATE_KEY para conectar con Google Calendar." };
     }
     if (!calendarId) {
@@ -186,7 +184,7 @@ function getGoogleCalendarClient() {
 
     const auth = new google.auth.JWT({
         email: clientEmail,
-        key: privateKey,
+        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
         scopes: ["https://www.googleapis.com/auth/calendar.events"],
     });
 
