@@ -169,24 +169,27 @@ function buildGoogleDateTime({ year, month, day, hour, minute }) {
 }
 
 function getGoogleCalendarClient() {
-    const clientEmail = String(process.env.GOOGLE_CLIENT_EMAIL || "").trim();
     const calendarId = String(process.env.GOOGLE_CALENDAR_ID || "").trim();
-
-    if (!clientEmail) {
-        return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_CLIENT_EMAIL para conectar con Google Calendar." };
-    }
-    if (!String(process.env.GOOGLE_PRIVATE_KEY || "").trim()) {
-        return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_PRIVATE_KEY para conectar con Google Calendar." };
-    }
     if (!calendarId) {
         return { ok: false, error: "❌ Falta la variable de entorno GOOGLE_CALENDAR_ID para conectar con Google Calendar." };
     }
 
-    const auth = new google.auth.JWT({
-        email: clientEmail,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        scopes: ["https://www.googleapis.com/auth/calendar.events"],
-    });
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKeyEnv = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!clientEmail || !privateKeyEnv) {
+        throw new Error("Error fatal: GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY no están definidas en el entorno (Vercel).");
+    }
+
+    // Formateo seguro de la llave
+    const formattedPrivateKey = privateKeyEnv.replace(/\\n/g, '\n');
+
+    const auth = new google.auth.JWT(
+        clientEmail,
+        null,
+        formattedPrivateKey,
+        ['https://www.googleapis.com/auth/calendar']
+    );
 
     return {
         ok: true,
