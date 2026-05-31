@@ -231,8 +231,12 @@ async function createGoogleCalendarMeetingEvent(meeting) {
             },
         };
 
+        // Extracción y limpieza extrema de caracteres invisibles, saltos de línea y espacios
+        const rawCalendarId = process.env.GOOGLE_CALENDAR_ID || '';
+        const cleanCalendarId = rawCalendarId.replace(/[\r\n\s]+/g, '');
+
         const response = await clientResult.calendar.events.insert({
-            calendarId: 'process.env.GOOGLE_CALENDAR_ID',
+            calendarId: cleanCalendarId,
             requestBody: eventData,
         });
 
