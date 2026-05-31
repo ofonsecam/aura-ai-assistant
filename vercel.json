@@ -25,10 +25,6 @@
       "schedule": "0 1 * * 1"
     },
     {
-      "path": "/api/cron-weekly-summary",
-      "schedule": "0 1 * * 1"
-    },
-    {
       "path": "/api/cron-daily-close",
       "schedule": "30 1 * * *"
     }

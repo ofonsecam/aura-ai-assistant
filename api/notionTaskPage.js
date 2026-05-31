@@ -353,13 +353,12 @@ async function getWeeklyCronReportData() {
         ],
     });
 
-    const doneStatusOr = TASK_STATUS_DONE_VALUES.map((name) => ({
-        property: PROP_TASK_ESTADO,
-        select: { equals: name },
-    }));
     const completedThisWeekPages = await queryTaskDatabaseAll({
         and: [
-            { or: doneStatusOr },
+            {
+                property: PROP_TASK_ESTADO,
+                select: { equals: "Hecho" },
+            },
             {
                 property: PROP_TASK_FECHA_CIERRE,
                 date: {
