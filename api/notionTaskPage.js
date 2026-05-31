@@ -410,6 +410,38 @@ async function getWeeklyCronReportData() {
 }
 
 /**
+ * Tareas completadas (Hecho / Done / Cumplida) con *Fecha de Cierre* en los últimos 7 días civiles (Bogotá, inclusive).
+ * @returns {Promise<{ count: number, startYmd: string, endYmd: string }>}
+ */
+async function getCompletedTasksCountLast7DaysBogota() {
+    const endYmd = getTodayBogotaYmd();
+    const startYmd = addCalendarDaysYmd(endYmd, -6);
+
+    const doneStatusOr = TASK_STATUS_DONE_VALUES.map((name) => ({
+        property: PROP_TASK_ESTADO,
+        select: { equals: name },
+    }));
+    const completedPages = await queryTaskDatabaseAll({
+        and: [
+            { or: doneStatusOr },
+            {
+                property: PROP_TASK_FECHA_CIERRE,
+                date: {
+                    on_or_after: startYmd,
+                    on_or_before: endYmd,
+                },
+            },
+        ],
+    });
+    const count = completedPages.filter((p) => {
+        const ymd = getTaskCierreYmdFromPage(p);
+        return ymd && ymd >= startYmd && ymd <= endYmd;
+    }).length;
+
+    return { count, startYmd, endYmd };
+}
+
+/**
  * Fecha programada de la propiedad Fecha (inicio; si no hay, fin del rango).
  * @returns {string | null} YYYY-MM-DD
  */
@@ -1606,6 +1638,7 @@ module.exports = {
     rescheduleTaskDateByPageId,
     getOverdueTasks,
     getWeeklyCronReportData,
+    getCompletedTasksCountLast7DaysBogota,
     getCompletedTasksTodayBogota,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
