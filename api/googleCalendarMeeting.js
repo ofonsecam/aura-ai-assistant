@@ -244,7 +244,8 @@ async function createGoogleCalendarMeetingEvent(meeting) {
             endDateTime: buildGoogleDateTime(end),
         };
     } catch (error) {
-        throw new Error(`NUEVO ERROR API: ${error.message} - Intentando en ID: [${process.env.GOOGLE_CALENDAR_ID}]`);
+        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}');
+        throw new Error(`NUEVO ERROR API: ${error.message} - ID: [${process.env.GOOGLE_CALENDAR_ID}] - Bot autenticado: [${credentials.client_email}]`);
     }
 }
 
