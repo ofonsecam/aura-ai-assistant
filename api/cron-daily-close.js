@@ -1,44 +1,31 @@
 /**
- * Cierre de noche (20:30 America/Bogota): resumen semanal de pendientes + cierre diario de completadas.
+ * Cierre de noche (20:30 America/Bogota): logros del día + plan mañana + pendientes semanales.
  * Vercel cron: 01:30 UTC diario (= 20:30 del día anterior en Bogotá, mismo instante civil).
  */
-const { getWeeklyTasks, getCompletedTasksTodayBogota } = require("./notionTaskPage");
+const { getCompletedTasksTodayBogota, getTomorrowTasks, getWeeklyTasks } = require("./notionTaskPage");
 
 function safeTelegramMdLine(s) {
     return String(s).replace(/[*_`[\]]/g, "·");
 }
 
-function buildCompletedTodaySection(dateYmd, tasks) {
-    if (!tasks.length) {
-        return [
-            "———————————————",
-            "",
-            "🌙 *Cierre de día*",
-            "",
-            `Hoy (\`${dateYmd}\`, Bogotá) no hay tareas con *Fecha de Cierre* en este día (Hecho/Done/Cumplida vía bot o con esa fecha rellenada).`,
-            "",
-            "Descansa bien: un día sin tachar ítems también cuenta. Mañana puedes ordenar 2–3 prioridades y retomar el ritmo con calma. 🌿",
-        ].join("\n");
-    }
-
-    const list = tasks
+function formatCompletedTodayList(tasks) {
+    if (!tasks.length) return "_Sin completadas hoy._";
+    return tasks
         .map(
             (t) =>
                 `• ${safeTelegramMdLine(t.name)} · _${safeTelegramMdLine(t.area)}_ · \`${safeTelegramMdLine(t.status)}\``
         )
         .join("\n");
+}
 
-    return [
-        "———————————————",
-        "",
-        "🌙 *Cierre de día*",
-        "",
-        `Cierres reales hoy (\`${dateYmd}\`, Bogotá) según *Fecha de Cierre*:`,
-        "",
-        list,
-        "",
-        `*Total:* ${tasks.length} tarea(s). Buen trabajo — cierra la laptop y desconecta un rato. ✨`,
-    ].join("\n");
+function formatPendingTasksList(tasks) {
+    if (!tasks.length) return "_Sin pendientes._";
+    return tasks
+        .map(
+            (t, i) =>
+                `${i + 1}. 📌 [${safeTelegramMdLine(t.area)}] — ${safeTelegramMdLine(t.name)} (${safeTelegramMdLine(t.status)})`
+        )
+        .join("\n");
 }
 
 export default async function handler(req, res) {
@@ -46,17 +33,30 @@ export default async function handler(req, res) {
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
     try {
-        const [{ text: weeklyText, weekStart, weekEnd }, { dateYmd, tasks: completedToday }] =
-            await Promise.all([getWeeklyTasks(), getCompletedTasksTodayBogota()]);
+        const [completed, tomorrow, weekly] = await Promise.all([
+            getCompletedTasksTodayBogota(),
+            getTomorrowTasks(),
+            getWeeklyTasks(),
+        ]);
 
         const text = [
-            "🗓️ *Resumen semanal de tareas*",
+            "✅ *Logros de hoy Socio!! Re bien hecho! Son las Completadas:*",
             "",
-            `Semana \`${weekStart}\` → \`${weekEnd}\` · _Bogotá_`,
+            formatCompletedTodayList(completed.tasks),
             "",
-            weeklyText,
+            "———————————————",
             "",
-            buildCompletedTodaySection(dateYmd, completedToday),
+            "🚀 *Veo ojo con esto: Plan para mañana:*",
+            "",
+            formatPendingTasksList(tomorrow.tasks),
+            "",
+            "———————————————",
+            "",
+            "🗓️ *Tareas pendientes de la semana para que este pilas socio!*",
+            "",
+            `Semana \`${weekly.weekStart}\` → \`${weekly.weekEnd}\` · _Bogotá_`,
+            "",
+            formatPendingTasksList(weekly.tasks),
         ].join("\n");
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -69,7 +69,12 @@ export default async function handler(req, res) {
             }),
         });
 
-        return res.status(200).json({ success: true, completedCount: completedToday.length });
+        return res.status(200).json({
+            success: true,
+            completedCount: completed.tasks.length,
+            tomorrowCount: tomorrow.tasks.length,
+            weeklyCount: weekly.tasks.length,
+        });
     } catch (error) {
         console.error("Cron Daily Close Error:", error);
         return res.status(500).json({ error: error.message });

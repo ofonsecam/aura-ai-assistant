@@ -57,7 +57,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.8.3.3
+📖 Manual de Aura AI v2.8.3.4
 
 🛠 Gestión de Tareas
 
@@ -74,7 +74,7 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 /reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual (/listames)
 
-Prioridades en Notion: Alta 🔴 · Media 🟡 · Baja 🟢 (se muestran en las listas /listad, /listam, etc.)
+Prioridades: Alta 🔴, Media 🟡, Baja 🟢
 
 ⛪️ Tareas pendientes de reuniones 
 

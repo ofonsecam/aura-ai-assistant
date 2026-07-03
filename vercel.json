@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron-weekly",
-      "schedule": "0 1 * * 1"
+      "schedule": "0 1 * * 0"
     },
     {
       "path": "/api/cron-daily-close",
