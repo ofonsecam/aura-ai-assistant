@@ -1,12 +1,44 @@
 /**
- * Cierre de día (20:30 America/Bogota): tareas con *Fecha de Cierre* en el día actual (Bogotá).
- * Recuento preciso según la propiedad Notion, no last_edited_time.
+ * Cierre de noche (20:30 America/Bogota): resumen semanal de pendientes + cierre diario de completadas.
  * Vercel cron: 01:30 UTC diario (= 20:30 del día anterior en Bogotá, mismo instante civil).
  */
-const { getCompletedTasksTodayBogota } = require("./notionTaskPage");
+const { getWeeklyTasks, getCompletedTasksTodayBogota } = require("./notionTaskPage");
 
 function safeTelegramMdLine(s) {
     return String(s).replace(/[*_`[\]]/g, "·");
+}
+
+function buildCompletedTodaySection(dateYmd, tasks) {
+    if (!tasks.length) {
+        return [
+            "———————————————",
+            "",
+            "🌙 *Cierre de día*",
+            "",
+            `Hoy (\`${dateYmd}\`, Bogotá) no hay tareas con *Fecha de Cierre* en este día (Hecho/Done/Cumplida vía bot o con esa fecha rellenada).`,
+            "",
+            "Descansa bien: un día sin tachar ítems también cuenta. Mañana puedes ordenar 2–3 prioridades y retomar el ritmo con calma. 🌿",
+        ].join("\n");
+    }
+
+    const list = tasks
+        .map(
+            (t) =>
+                `• ${safeTelegramMdLine(t.name)} · _${safeTelegramMdLine(t.area)}_ · \`${safeTelegramMdLine(t.status)}\``
+        )
+        .join("\n");
+
+    return [
+        "———————————————",
+        "",
+        "🌙 *Cierre de día*",
+        "",
+        `Cierres reales hoy (\`${dateYmd}\`, Bogotá) según *Fecha de Cierre*:`,
+        "",
+        list,
+        "",
+        `*Total:* ${tasks.length} tarea(s). Buen trabajo — cierra la laptop y desconecta un rato. ✨`,
+    ].join("\n");
 }
 
 export default async function handler(req, res) {
@@ -14,34 +46,18 @@ export default async function handler(req, res) {
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
     try {
-        const { dateYmd, tasks } = await getCompletedTasksTodayBogota();
+        const [{ text: weeklyText, weekStart, weekEnd }, { dateYmd, tasks: completedToday }] =
+            await Promise.all([getWeeklyTasks(), getCompletedTasksTodayBogota()]);
 
-        let text;
-        if (tasks.length === 0) {
-            text = [
-                "🌙 *Cierre de día*",
-                "",
-                `Hoy (\`${dateYmd}\`, Bogotá) no hay tareas con *Fecha de Cierre* en este día (Hecho/Done/Cumplida vía bot o con esa fecha rellenada).`,
-                "",
-                "Descansa bien: un día sin tachar ítems también cuenta. Mañana puedes ordenar 2–3 prioridades y retomar el ritmo con calma. 🌿",
-            ].join("\n");
-        } else {
-            const list = tasks
-                .map(
-                    (t) =>
-                        `• ${safeTelegramMdLine(t.name)} · _${safeTelegramMdLine(t.area)}_ · \`${safeTelegramMdLine(t.status)}\``
-                )
-                .join("\n");
-            text = [
-                "🌙 *Cierre de día*",
-                "",
-                `Cierres reales hoy (\`${dateYmd}\`, Bogotá) según *Fecha de Cierre*:`,
-                "",
-                list,
-                "",
-                `*Total:* ${tasks.length} tarea(s). Buen trabajo — cierra la laptop y desconecta un rato. ✨`,
-            ].join("\n");
-        }
+        const text = [
+            "🗓️ *Resumen semanal de tareas*",
+            "",
+            `Semana \`${weekStart}\` → \`${weekEnd}\` · _Bogotá_`,
+            "",
+            weeklyText,
+            "",
+            buildCompletedTodaySection(dateYmd, completedToday),
+        ].join("\n");
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
@@ -53,7 +69,7 @@ export default async function handler(req, res) {
             }),
         });
 
-        return res.status(200).json({ success: true, count: tasks.length });
+        return res.status(200).json({ success: true, completedCount: completedToday.length });
     } catch (error) {
         console.error("Cron Daily Close Error:", error);
         return res.status(500).json({ error: error.message });

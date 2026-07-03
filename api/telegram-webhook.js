@@ -57,7 +57,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.8.3.2
+📖 Manual de Aura AI v2.8.3.3
 
 🛠 Gestión de Tareas
 
@@ -66,12 +66,15 @@ __________________________________________________________________
 Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 /listad → Ver tareas del día (hoy)
+/listam → Ver tareas de mañana
 /listas → Ver tareas de la semana actual
-/listam → Ver tareas del mes actual
+/listames → Ver tareas del mes actual
 /listav → Ver tareas vencidas
 /plan → Ver plan de proyectos (pendientes por fecha de ejecución)
 
-/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual
+/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual (/listames)
+
+Prioridades en Notion: Alta 🔴 · Media 🟡 · Baja 🟢 (se muestran en las listas /listad, /listam, etc.)
 
 ⛪️ Tareas pendientes de reuniones 
 
@@ -465,7 +468,7 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 const TASKS_PAGE_SIZE = 8;
 const COMMAND_TASKS_PAGE_SIZE = 6;
 const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
-const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listav", "plan"]);
+const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listames", "listav", "plan"]);
 
 /**
  * @param {number} page Página 0-based solicitada.
@@ -485,6 +488,15 @@ function getBogotaNowDate() {
 
 function getBogotaTodayYmd() {
     const now = getBogotaNowDate();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
+
+function getBogotaTomorrowYmd() {
+    const now = getBogotaNowDate();
+    now.setDate(now.getDate() + 1);
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, "0");
     const d = String(now.getDate()).padStart(2, "0");
@@ -529,12 +541,18 @@ function extractNotionTaskFromPage(page) {
     const area = props.Area?.select?.name || "Sin Área";
     const fecha = props.Fecha?.date?.start || "";
     const status = props.Estado?.select?.name || "---";
+    const priority =
+        props.Prioridad?.select?.name ||
+        (Array.isArray(props.Prioridad?.multi_select) && props.Prioridad.multi_select.length
+            ? props.Prioridad.multi_select.map((o) => o.name).join(", ")
+            : null);
     return {
         id: page?.id || "",
         name: title || "Sin título",
         area: area || "Sin Área",
         fechaYmd: fecha,
         status,
+        priority: priority || null,
     };
 }
 
@@ -560,6 +578,12 @@ function buildTaskFilterByCommand(commandKey) {
         };
     }
     if (commandKey === "listam") {
+        const tomorrowYmd = getBogotaTomorrowYmd();
+        return {
+            and: [{ or: statusOr }, { property: "Fecha", date: { equals: tomorrowYmd } }],
+        };
+    }
+    if (commandKey === "listames") {
         const monthRange = getCurrentMonthRangeBogotaYmd();
         return {
             and: [
@@ -640,6 +664,15 @@ function escapeTelegramMarkdown(text) {
         .replace(/`/g, "\\`");
 }
 
+/** Prefijo visual de prioridad para listas; vacío si no hay prioridad reconocida. */
+function formatTaskPriorityEmojiPrefix(priority) {
+    const p = String(priority || "").trim().toLowerCase();
+    if (p === "alta") return "🔴 ";
+    if (p === "media") return "🟡 ";
+    if (p === "baja") return "🟢 ";
+    return "";
+}
+
 function buildPlanListMessage(projects, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
     const allItems = Array.isArray(projects) ? projects : [];
     const totalPages = Math.max(1, Math.ceil(allItems.length / pageSize));
@@ -680,7 +713,8 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
             const area = escapeTelegramMarkdown(task.area || "Sin Área");
             const taskName = escapeTelegramMarkdown(task.name || "Sin título");
             const dateLabel = formatTaskDateLabel(task.fechaYmd);
-            return `${absoluteIndex}. 🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
+            const priorityPrefix = formatTaskPriorityEmojiPrefix(task.priority);
+            return `${absoluteIndex}. ${priorityPrefix}🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
         })
         .join("\n\n");
     return { text: `${header}${body}`, page: safePage, totalPages };
@@ -1424,7 +1458,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `nota/`, `habito/`, `/listam` o `/listav`. /help para el manual, pero haga algo! no se quede mirando que no esta en venta!"
+                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `nota/`, `habito/`, `/listam` (mañana) o `/listav`. /help para el manual, pero haga algo! no se quede mirando que no esta en venta!"
             );
             return res.status(200).send("OK");
         }
@@ -1488,6 +1522,10 @@ module.exports = async function handler(req, res) {
             }
             if (text === "/listam") {
                 await renderListCommandPage(token, chatId, "listam", 0);
+                return res.status(200).send("OK");
+            }
+            if (text === "/listames") {
+                await renderListCommandPage(token, chatId, "listames", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/listav") {

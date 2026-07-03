@@ -9,8 +9,18 @@ const PROP_TASK_NAME = 'Name';
 const PROP_TASK_ESTADO = 'Estado';
 const PROP_TASK_FECHA = 'Fecha';
 const PROP_TASK_AREA = 'Area';
+/** Prioridad opcional en Notion (select). */
+const PROP_TASK_PRIORIDAD = 'Prioridad';
 /** Fecha y hora en que la tarea pasó a un estado completado (rellenada por el bot). */
 const PROP_TASK_FECHA_CIERRE = 'Fecha de Cierre';
+/** Emojis de prioridad reconocidos al inicio del título (fallback). */
+const PRIORITY_EMOJI_MAP = {
+    '🔴': 'Alta',
+    '🟠': 'Media',
+    '🟡': 'Media',
+    '🟢': 'Baja',
+    '⬜': 'Baja',
+};
 /** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
 const TASK_STATUS_PENDING = 'Pendiente';
 const TASK_STATUS_PAUSED = 'Pausado';
@@ -69,6 +79,31 @@ function toRichTextSegments(text) {
     return segments.length ? segments : [{ text: { content: '' } }];
 }
 
+/**
+ * Extrae prioridad desde propiedad Notion o emoji/tag al inicio del título.
+ * @param {any} page
+ * @returns {string|null}
+ */
+function extractTaskPriorityFromPage(page) {
+    const props = page?.properties || {};
+    const selectName = props[PROP_TASK_PRIORIDAD]?.select?.name;
+    if (selectName) return String(selectName).trim();
+
+    const multi = props[PROP_TASK_PRIORIDAD]?.multi_select;
+    if (Array.isArray(multi) && multi.length) {
+        return multi.map((o) => o?.name).filter(Boolean).join(', ');
+    }
+
+    const title =
+        props[PROP_TASK_NAME]?.title?.[0]?.plain_text ||
+        props[PROP_TASK_NAME]?.title?.[0]?.text?.content ||
+        '';
+    const m = String(title).match(/^(\S)\s*/u);
+    if (m && PRIORITY_EMOJI_MAP[m[1]]) return PRIORITY_EMOJI_MAP[m[1]];
+
+    return null;
+}
+
 function getLevenshteinDistance(a, b) {
     if (a === b) return 0;
     const al = a.length, bl = b.length;
@@ -87,6 +122,13 @@ function getLevenshteinDistance(a, b) {
 /** Fecha local YYYY-MM-DD en zona America/Bogota. */
 function getTodayBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    return now.toISOString().slice(0, 10);
+}
+
+/** Fecha local YYYY-MM-DD de mañana en zona America/Bogota. */
+function getTomorrowBogotaYmd() {
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+    now.setDate(now.getDate() + 1);
     return now.toISOString().slice(0, 10);
 }
 
@@ -991,14 +1033,15 @@ async function readNotionTasks(filterArea, filterDate) {
 /**
  * Normaliza una página Notion al formato de tarea para resúmenes de Telegram.
  * @param {any} p
- * @returns {{ id: string, name: string, status: string, area: string }}
+ * @returns {{ id: string, name: string, status: string, area: string, priority: string|null }}
  */
 function mapTaskPageToSummaryTask(p) {
     return {
         id: p.id,
         name: p.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content || 'Sin título',
         status: p.properties?.[PROP_TASK_ESTADO]?.select?.name || '---',
-        area: p.properties?.[PROP_TASK_AREA]?.select?.name || '---'
+        area: p.properties?.[PROP_TASK_AREA]?.select?.name || '---',
+        priority: extractTaskPriorityFromPage(p),
     };
 }
 
@@ -1019,6 +1062,29 @@ function formatSummaryTasksText(tasks) {
  */
 async function getDailyTasks() {
     const dateYmd = getTodayBogotaYmd();
+    const pages = await queryTaskDatabaseAll({
+        and: [
+            {
+                or: [
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PENDING } },
+                    { property: PROP_TASK_ESTADO, select: { equals: 'Haciendo' } },
+                    { property: PROP_TASK_ESTADO, select: { equals: TASK_STATUS_PAUSED } }
+                ]
+            },
+            { property: PROP_TASK_FECHA, date: { equals: dateYmd } }
+        ]
+    });
+    const tasks = pages.map(mapTaskPageToSummaryTask);
+    return { text: formatSummaryTasksText(tasks), tasks, dateYmd };
+}
+
+/**
+ * Consulta tareas cuya propiedad Fecha coincide exactamente con mañana (Bogotá).
+ * Incluye estados activos: Pendiente, Haciendo y Pausado.
+ * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string, priority: string|null }[], dateYmd: string }>}
+ */
+async function getTomorrowTasks() {
+    const dateYmd = getTomorrowBogotaYmd();
     const pages = await queryTaskDatabaseAll({
         and: [
             {
@@ -1630,6 +1696,7 @@ module.exports = {
     updateTaskStatus,
     readNotionTasks,
     getDailyTasks,
+    getTomorrowTasks,
     getWeeklyTasks,
     getMonthTasks,
     deleteNotionTask,
