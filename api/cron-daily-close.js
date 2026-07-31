@@ -1,6 +1,6 @@
 /**
  * Cierre de noche (20:30 America/Bogota): logros del día + plan mañana + pendientes semanales.
- * Vercel cron: 01:30 UTC diario (= 20:30 del día anterior en Bogotá, mismo instante civil).
+ * Vercel cron: 30 1 * * * UTC (= 20:30 Bogotá).
  */
 const { getCompletedTasksTodayBogota, getTomorrowTasks, getWeeklyTasks } = require("./notionTaskPage");
 

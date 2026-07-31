@@ -83,7 +83,7 @@ The JSON must have exactly these three keys:
 
 1. "Name": (string) A concise, actionable title for the task.
 
-2. "Area": (string) Categorize the task. You MUST choose EXACTLY ONE of these options: "Trabajo secundario", "Trabajo Traffix", "Iglesia", "Familia", "Carrera", "IA Dev", "Universidad", or "Personales". If unsure, use "Personales".
+2. "Area": (string) Categorize the task. You MUST choose EXACTLY ONE of these options: "Trabajo secundario", "Trabajo Traffix", "Iglesia", "Familia", "Carrera", "IA Dev", "Universidad", "Personales", or "Matrimonio". If unsure, use "Personales".
 
 3. "Fecha": (string) If the audio mentions a deadline or specific day, calculate the date and output it in ISO format YYYY-MM-DD.
 Use Reference Time (MM-DD-YY): ${referenceTimeMmDdYy}

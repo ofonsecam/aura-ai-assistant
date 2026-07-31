@@ -9,18 +9,8 @@ const PROP_TASK_NAME = 'Name';
 const PROP_TASK_ESTADO = 'Estado';
 const PROP_TASK_FECHA = 'Fecha';
 const PROP_TASK_AREA = 'Area';
-/** Prioridad opcional en Notion (select). */
-const PROP_TASK_PRIORIDAD = 'Prioridad';
 /** Fecha y hora en que la tarea pasó a un estado completado (rellenada por el bot). */
 const PROP_TASK_FECHA_CIERRE = 'Fecha de Cierre';
-/** Emojis de prioridad reconocidos al inicio del título (fallback). */
-const PRIORITY_EMOJI_MAP = {
-    '🔴': 'Alta',
-    '🟠': 'Media',
-    '🟡': 'Media',
-    '🟢': 'Baja',
-    '⬜': 'Baja',
-};
 /** Valor exacto del select Estado para tareas nuevas (P mayúscula). */
 const TASK_STATUS_PENDING = 'Pendiente';
 const TASK_STATUS_PAUSED = 'Pausado';
@@ -35,6 +25,7 @@ const TASK_ALLOWED_AREAS = [
     'IA Dev',
     'Universidad',
     'Personales',
+    'Matrimonio',
 ];
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
@@ -77,31 +68,6 @@ function toRichTextSegments(text) {
         segments.push({ text: { content: s.slice(i, i + max) } });
     }
     return segments.length ? segments : [{ text: { content: '' } }];
-}
-
-/**
- * Extrae prioridad desde propiedad Notion o emoji/tag al inicio del título.
- * @param {any} page
- * @returns {string|null}
- */
-function extractTaskPriorityFromPage(page) {
-    const props = page?.properties || {};
-    const selectName = props[PROP_TASK_PRIORIDAD]?.select?.name;
-    if (selectName) return String(selectName).trim();
-
-    const multi = props[PROP_TASK_PRIORIDAD]?.multi_select;
-    if (Array.isArray(multi) && multi.length) {
-        return multi.map((o) => o?.name).filter(Boolean).join(', ');
-    }
-
-    const title =
-        props[PROP_TASK_NAME]?.title?.[0]?.plain_text ||
-        props[PROP_TASK_NAME]?.title?.[0]?.text?.content ||
-        '';
-    const m = String(title).match(/^(\S)\s*/u);
-    if (m && PRIORITY_EMOJI_MAP[m[1]]) return PRIORITY_EMOJI_MAP[m[1]];
-
-    return null;
 }
 
 function getLevenshteinDistance(a, b) {
@@ -1033,7 +999,7 @@ async function readNotionTasks(filterArea, filterDate) {
 /**
  * Normaliza una página Notion al formato de tarea para resúmenes de Telegram.
  * @param {any} p
- * @returns {{ id: string, name: string, status: string, area: string, priority: string|null }}
+ * @returns {{ id: string, name: string, status: string, area: string }}
  */
 function mapTaskPageToSummaryTask(p) {
     return {
@@ -1041,7 +1007,6 @@ function mapTaskPageToSummaryTask(p) {
         name: p.properties?.[PROP_TASK_NAME]?.title?.[0]?.text?.content || 'Sin título',
         status: p.properties?.[PROP_TASK_ESTADO]?.select?.name || '---',
         area: p.properties?.[PROP_TASK_AREA]?.select?.name || '---',
-        priority: extractTaskPriorityFromPage(p),
     };
 }
 
@@ -1081,7 +1046,7 @@ async function getDailyTasks() {
 /**
  * Consulta tareas cuya propiedad Fecha coincide exactamente con mañana (Bogotá).
  * Incluye estados activos: Pendiente, Haciendo y Pausado.
- * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string, priority: string|null }[], dateYmd: string }>}
+ * @returns {Promise<{ text: string, tasks: { id: string, name: string, status: string, area: string }[], dateYmd: string }>}
  */
 async function getTomorrowTasks() {
     const dateYmd = getTomorrowBogotaYmd();
@@ -1535,6 +1500,9 @@ function getHabitsDatabaseNotionUrl() {
     return `https://www.notion.so/${id.replace(/-/g, '')}`;
 }
 
+/** Propiedad fecha en la base de hábitos. */
+const HABIT_DATE_PROPERTY = 'Date';
+
 /**
  * Buscar o crear la fila del día en la base de hábitos.
  * @returns {Promise<{ ok: true, page_id: string }>}
@@ -1553,41 +1521,65 @@ async function ensureDailyHabitPage() {
     const dayTitle = `${now.getFullYear()} ${pad(now.getMonth() + 1)} ${pad(now.getDate())}`;
     const dateIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
-    const queryRes = await fetch(`https://api.notion.com/v1/databases/${habitsDbId}/query`, {
+    const queryByTitle = await fetch(`https://api.notion.com/v1/databases/${habitsDbId}/query`, {
         method: 'POST',
         headers: NOTION_HEADERS,
         body: JSON.stringify({
-            filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: dayTitle } }
-        })
+            filter: { property: HABIT_PAGE_TITLE_PROPERTY, title: { equals: dayTitle } },
+        }),
     });
-    if (!queryRes.ok) {
-        let detail = String(queryRes.status);
+    if (!queryByTitle.ok) {
+        let detail = String(queryByTitle.status);
         try {
-            const errBody = await queryRes.json();
-            if (errBody?.message) detail = `${queryRes.status}: ${errBody.message}`;
+            const errBody = await queryByTitle.json();
+            if (errBody?.message) detail = `${queryByTitle.status}: ${errBody.message}`;
         } catch (_) { /* ignore */ }
         throw new Error(`❌ Error consultando base de hábitos (${detail}).`);
     }
-    const queryData = await queryRes.json();
-    if (queryData.object === 'error' && queryData.message) {
-        throw new Error(`❌ ${queryData.message}`);
+    const titleData = await queryByTitle.json();
+    if (titleData.object === 'error' && titleData.message) {
+        throw new Error(`❌ ${titleData.message}`);
     }
-    const existing = queryData.results?.[0];
+    let existing = titleData.results?.[0];
+
+    if (!existing?.id) {
+        const queryByDate = await fetch(`https://api.notion.com/v1/databases/${habitsDbId}/query`, {
+            method: 'POST',
+            headers: NOTION_HEADERS,
+            body: JSON.stringify({
+                filter: { property: HABIT_DATE_PROPERTY, date: { equals: dateIso } },
+            }),
+        });
+        if (queryByDate.ok) {
+            const dateData = await queryByDate.json();
+            existing = dateData.results?.[0];
+        }
+    }
+
     if (existing?.id) {
         return { ok: true, page_id: existing.id };
     }
 
+    const schema = await fetchHabitsDatabaseCheckboxPropertyNames();
+    if (!schema.ok) {
+        throw new Error(schema.message);
+    }
+
     const properties = {
         [HABIT_PAGE_TITLE_PROPERTY]: { title: [{ text: { content: dayTitle } }] },
-        Date: { date: { start: dateIso } }
+        [HABIT_DATE_PROPERTY]: { date: { start: dateIso } },
     };
+    for (const checkboxName of schema.names) {
+        properties[checkboxName] = { checkbox: false };
+    }
+
     const createRes = await fetch('https://api.notion.com/v1/pages', {
         method: 'POST',
         headers: NOTION_HEADERS,
         body: JSON.stringify({
             parent: { database_id: habitsDbId },
-            properties
-        })
+            properties,
+        }),
     });
     if (!createRes.ok) {
         let detail = String(createRes.status);
@@ -1602,6 +1594,99 @@ async function ensureDailyHabitPage() {
         throw new Error('❌ Notion no devolvió id de página al crear el día.');
     }
     return { ok: true, page_id: data.id };
+}
+
+/**
+ * Lee los estados checkbox de una página de hábitos.
+ * @param {string} pageId
+ * @returns {Promise<{ ok: true, states: Record<string, boolean> } | { ok: false, message: string }>}
+ */
+async function getHabitPageCheckboxStates(pageId) {
+    if (!pageId) {
+        return { ok: false, message: '❌ page_id de hábitos inválido.' };
+    }
+    const schema = await fetchHabitsDatabaseCheckboxPropertyNames();
+    if (!schema.ok) return { ok: false, message: schema.message };
+
+    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+        method: 'GET',
+        headers: NOTION_HEADERS,
+    });
+    if (!res.ok) {
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        return { ok: false, message: `❌ No se pudo leer la página de hábitos (${detail}).` };
+    }
+    const page = await res.json();
+    const props = page?.properties || {};
+    const states = {};
+    for (const name of schema.names) {
+        states[name] = Boolean(props[name]?.checkbox);
+    }
+    return { ok: true, states };
+}
+
+/**
+ * Hábitos pendientes (checkbox false) del día actual en Bogotá.
+ * @returns {Promise<
+ *   | { ok: true, pageId: string, pending: { propertyKey: string, name: string }[], allDone: boolean }
+ *   | { ok: false, message: string }
+ * >}
+ */
+async function getPendingHabitsForToday() {
+    try {
+        const daily = await ensureDailyHabitPage();
+        if (!daily?.ok || !daily.page_id) {
+            return { ok: false, message: '❌ No pude asegurar la página diaria de hábitos.' };
+        }
+        const statesResult = await getHabitPageCheckboxStates(daily.page_id);
+        if (!statesResult.ok) return statesResult;
+
+        const pending = Object.entries(statesResult.states)
+            .filter(([, done]) => !done)
+            .map(([propertyKey]) => ({ propertyKey, name: propertyKey }));
+
+        return {
+            ok: true,
+            pageId: daily.page_id,
+            pending,
+            allDone: pending.length === 0,
+        };
+    } catch (e) {
+        return { ok: false, message: e?.message || String(e) };
+    }
+}
+
+/**
+ * Marca un checkbox de hábito por nombre exacto de propiedad Notion.
+ * @param {string} propertyKey
+ * @param {string} pageId
+ */
+async function markHabitCheckboxDone(propertyKey, pageId) {
+    if (!habitsDatabaseId) {
+        return { ok: false, message: '❌ Falta NOTION_HABITS_ID (o NOTION_HABITS_DATABASE_ID) en el entorno.' };
+    }
+    const key = String(propertyKey || '').trim();
+    if (!key) return { ok: false, message: '❌ Propiedad de hábito inválida.' };
+    if (!pageId) return { ok: false, message: '❌ page_id de hábitos inválido.' };
+
+    const patchRes = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: NOTION_HEADERS,
+        body: JSON.stringify({ properties: { [key]: { checkbox: true } } }),
+    });
+    if (!patchRes.ok) {
+        let detail = String(patchRes.status);
+        try {
+            const errBody = await patchRes.json();
+            if (errBody?.message) detail = `${patchRes.status}: ${errBody.message}`;
+        } catch (_) { /* ignore */ }
+        return { ok: false, message: `❌ No se pudo marcar el hábito "${key}" (${detail}).` };
+    }
+    return { ok: true, resolvedName: key };
 }
 
 /**
@@ -1707,6 +1792,8 @@ module.exports = {
     getCompletedTasksTodayBogota,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
+    getPendingHabitsForToday,
+    markHabitCheckboxDone,
     queryNotionPlanProjects,
     updateNotionProyectoEstado,
     PLAN_STATUS_COMPLETED,

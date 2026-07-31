@@ -3,7 +3,6 @@ const {
     createNotionNotePage,
     createNotionExpensePage,
     parseExpenseAmount,
-    markHabitAsDone,
     normalizeNotionArea,
     readNotionTasks,
     getDailyTasks,
@@ -12,16 +11,19 @@ const {
     getOverdueTasks,
     rescheduleTaskDateByPageId,
     updateNotionTaskStatus,
-    updateNotionProyectoEstado,
-    queryNotionPlanProjects,
-    PLAN_STATUS_COMPLETED,
     deleteNotionTask,
-    ensureDailyHabitPage,
-    getHabitsDatabaseNotionUrl,
+    getPendingHabitsForToday,
+    markHabitCheckboxDone,
     parseTaskText,
     taskDateToBogotaYmd,
 } = require("./notionTaskPage");
 const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
+const {
+    HABIT_CALLBACK_PREFIX,
+    decodeHabitPropertyCallback,
+    buildHabitsPendingMessage,
+    buildHabitsPendingKeyboard,
+} = require("./habitTelegramMenu");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
@@ -33,15 +35,13 @@ function getBogotaReferenceTimeMmDdYy() {
 
 function buildSystemInstruction(referenceTimeMmDdYy) {
     return `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
-{"intent": "TASK"|"NOTE"|"HABIT"|"QUERY", "data": { ... }}
+{"intent": "TASK"|"NOTE"|"QUERY", "data": { ... }}
 
 Reglas de clasificación:
 - TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha.
-  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
+  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Trabajo secundario, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales, Matrimonio; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
-- HABIT: el usuario indica que completó o marcó un hábito del día (ej. oración, escrituras).
-  data debe incluir: "habitName" (string, nombre del hábito tal como lo dice; el servidor lo cruzará con las columnas checkbox de Notion).
 - QUERY: el usuario pregunta qué debe hacer, qué tiene pendiente, su lista de tareas, o consulta sus pendientes sin crear nada nuevo.
   data puede ser {} o incluir campos opcionales si aclaran el filtro (no es obligatorio).
 
@@ -57,24 +57,17 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.8.3.4
+📖 Manual de Aura AI v2.9.0
 
 🛠 Gestión de Tareas
 
-Área/ Tarea → Crea tarea
+Área/ Tarea → Crea tarea (ej. Matrimonio/ Plan de cita)
 Área/ ver → Filtra pendientes
 Nota: Para Iglesia, usa el prefijo Iglesia/.
 
-/listad → Ver tareas del día (hoy)
-/listam → Ver tareas de mañana
-/listas → Ver tareas de la semana actual
-/listames → Ver tareas del mes actual
-/listav → Ver tareas vencidas
-/plan → Ver plan de proyectos (pendientes por fecha de ejecución)
-
-/reprograma [n] [fecha natural] → Reprograma la tarea n de la lista mensual (/listames)
-
-Prioridades: Alta 🔴, Media 🟡, Baja 🟢
+/ld → Ver tareas del día (hoy)
+/lm → Ver tareas de mañana
+/lv → Ver tareas vencidas
 
 ⛪️ Tareas pendientes de reuniones 
 
@@ -83,7 +76,7 @@ Prioridades: Alta 🔴, Media 🟡, Baja 🟢
 📝 Notas y Hábitos
 
 /Nota/ [Texto] → Envía a Inbox
-Habito/ [Nombre] → Marca hábito hoy
+/h → Hábitos pendientes de hoy (botones para marcar)
 
 📅 Google Calendar
 
@@ -102,7 +95,6 @@ const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
 const interactiveTaskActionContext = new Map();
-const interactivePlanActionContext = new Map();
 const interactiveRescheduleContext = new Map();
 const MANAGE_TASK_PROMPTS = {
     manage_day: "¿Qué número de la lista diaria quieres gestionar mi papacho?",
@@ -124,17 +116,6 @@ function buildInteractiveTaskActionsKeyboard(pageId) {
                 { text: "✅ Done", callback_data: `itask_done:${pageId}` },
                 { text: "📅 Reprogramar", callback_data: `itask_reschedule:${pageId}` },
                 { text: "🗑 Borrar", callback_data: `itask_delete:${pageId}` }
-            ],
-        ],
-    };
-}
-
-function buildInteractivePlanActionsKeyboard(pageId) {
-    return {
-        inline_keyboard: [
-            [
-                { text: "✅ Completar", callback_data: `iproj_done:${pageId}` },
-                { text: "✖️ Cerrar menú", callback_data: `iproj_close:${pageId}` },
             ],
         ],
     };
@@ -448,8 +429,25 @@ function clearInteractiveTaskActionContext(chatId, messageId) {
     interactiveTaskActionContext.delete(`${chatId}:${messageId}`);
 }
 
-function clearInteractivePlanActionContext(chatId, messageId) {
-    interactivePlanActionContext.delete(`${chatId}:${messageId}`);
+async function sendHabitsPendingMenu(token, chatId, opts = {}) {
+    const result = await getPendingHabitsForToday();
+    if (!result.ok) {
+        if (!opts.silent) {
+            await telegramSendMessage(token, chatId, `${result.message} Tranqui mi rey, lo revisamos ya mismo!`);
+        }
+        return result;
+    }
+    const text = buildHabitsPendingMessage(result.pending, { cron: opts.cron });
+    const keyboard = buildHabitsPendingKeyboard(result.pending);
+    if (opts.editMessageId != null) {
+        await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
+    } else {
+        await telegramSendMessage(token, chatId, text, keyboard);
+    }
+    if (opts.callbackQueryId) {
+        await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
+    }
+    return result;
 }
 
 async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", showAlert = false) {
@@ -468,7 +466,7 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 const TASKS_PAGE_SIZE = 8;
 const COMMAND_TASKS_PAGE_SIZE = 6;
 const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
-const LIST_COMMAND_KEYS = new Set(["listad", "listas", "listam", "listames", "listav", "plan"]);
+const LIST_COMMAND_KEYS = new Set(["ld", "lm", "lv"]);
 
 /**
  * @param {number} page Página 0-based solicitada.
@@ -503,37 +501,6 @@ function getBogotaTomorrowYmd() {
     return `${y}-${m}-${d}`;
 }
 
-function getCurrentWeekRangeBogotaYmd() {
-    const now = getBogotaNowDate();
-    const mondayOffset = (now.getDay() + 6) % 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - mondayOffset);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    const format = (d) => {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
-    };
-    return { startYmd: format(monday), endYmd: format(sunday) };
-}
-
-function getCurrentMonthRangeBogotaYmd() {
-    const now = getBogotaNowDate();
-    const y = now.getFullYear();
-    const m = now.getMonth();
-    const start = new Date(y, m, 1);
-    const end = new Date(y, m + 1, 0);
-    const format = (d) => {
-        const yy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        return `${yy}-${mm}-${dd}`;
-    };
-    return { startYmd: format(start), endYmd: format(end) };
-}
-
 function extractNotionTaskFromPage(page) {
     const props = page?.properties || {};
     const titleProp = props.Name?.title;
@@ -541,18 +508,12 @@ function extractNotionTaskFromPage(page) {
     const area = props.Area?.select?.name || "Sin Área";
     const fecha = props.Fecha?.date?.start || "";
     const status = props.Estado?.select?.name || "---";
-    const priority =
-        props.Prioridad?.select?.name ||
-        (Array.isArray(props.Prioridad?.multi_select) && props.Prioridad.multi_select.length
-            ? props.Prioridad.multi_select.map((o) => o.name).join(", ")
-            : null);
     return {
         id: page?.id || "",
         name: title || "Sin título",
         area: area || "Sin Área",
         fechaYmd: fecha,
         status,
-        priority: priority || null,
     };
 }
 
@@ -562,35 +523,15 @@ function buildTaskFilterByCommand(commandKey) {
         select: { equals: statusName },
     }));
     const todayYmd = getBogotaTodayYmd();
-    if (commandKey === "listad") {
+    if (commandKey === "ld") {
         return {
             and: [{ or: statusOr }, { property: "Fecha", date: { equals: todayYmd } }],
         };
     }
-    if (commandKey === "listas") {
-        const weekRange = getCurrentWeekRangeBogotaYmd();
-        return {
-            and: [
-                { or: statusOr },
-                { property: "Fecha", date: { on_or_after: weekRange.startYmd } },
-                { property: "Fecha", date: { on_or_before: weekRange.endYmd } },
-            ],
-        };
-    }
-    if (commandKey === "listam") {
+    if (commandKey === "lm") {
         const tomorrowYmd = getBogotaTomorrowYmd();
         return {
             and: [{ or: statusOr }, { property: "Fecha", date: { equals: tomorrowYmd } }],
-        };
-    }
-    if (commandKey === "listames") {
-        const monthRange = getCurrentMonthRangeBogotaYmd();
-        return {
-            and: [
-                { or: statusOr },
-                { property: "Fecha", date: { on_or_after: monthRange.startYmd } },
-                { property: "Fecha", date: { on_or_before: monthRange.endYmd } },
-            ],
         };
     }
     return {
@@ -599,9 +540,6 @@ function buildTaskFilterByCommand(commandKey) {
 }
 
 async function queryItemsForPaginatedList(commandKey) {
-    if (commandKey === "plan") {
-        return queryNotionPlanProjects();
-    }
     return queryTasksForListCommand(commandKey);
 }
 
@@ -664,38 +602,6 @@ function escapeTelegramMarkdown(text) {
         .replace(/`/g, "\\`");
 }
 
-/** Prefijo visual de prioridad para listas; vacío si no hay prioridad reconocida. */
-function formatTaskPriorityEmojiPrefix(priority) {
-    const p = String(priority || "").trim().toLowerCase();
-    if (p === "alta") return "🔴 ";
-    if (p === "media") return "🟡 ";
-    if (p === "baja") return "🟢 ";
-    return "";
-}
-
-function buildPlanListMessage(projects, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
-    const allItems = Array.isArray(projects) ? projects : [];
-    const totalPages = Math.max(1, Math.ceil(allItems.length / pageSize));
-    const { page: safePage } = clampTaskListPage(pageZeroBased, allItems.length, pageSize);
-    const pageHuman = safePage + 1;
-    const header = `📋 Plan de proyectos — Página ${pageHuman} de ${totalPages}\n\n`;
-    if (!allItems.length) {
-        return { text: `${header}🔍 Sin proyectos pendientes. Asi que rela mi rey!`, page: safePage, totalPages };
-    }
-    const start = safePage * pageSize;
-    const visible = allItems.slice(start, start + pageSize);
-    const body = visible
-        .map((item, idx) => {
-            const absoluteIndex = start + idx + 1;
-            const name = escapeTelegramMarkdown(item.name || "Sin título");
-            const dateLabel = formatTaskDateLabel(item.fechaYmd);
-            const tipo = escapeTelegramMarkdown(item.tipo || "Sin tipo");
-            return `${absoluteIndex}. 🔹 ${name}\n📅 *${dateLabel}*\n🏷️ *${tipo}*`;
-        })
-        .join("\n\n");
-    return { text: `${header}${body}`, page: safePage, totalPages };
-}
-
 function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
     const allTasks = Array.isArray(tasks) ? tasks : [];
     const totalPages = Math.max(1, Math.ceil(allTasks.length / pageSize));
@@ -713,8 +619,7 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
             const area = escapeTelegramMarkdown(task.area || "Sin Área");
             const taskName = escapeTelegramMarkdown(task.name || "Sin título");
             const dateLabel = formatTaskDateLabel(task.fechaYmd);
-            const priorityPrefix = formatTaskPriorityEmojiPrefix(task.priority);
-            return `${absoluteIndex}. ${priorityPrefix}🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
+            return `${absoluteIndex}. 🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
         })
         .join("\n\n");
     return { text: `${header}${body}`, page: safePage, totalPages };
@@ -754,10 +659,7 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
 
 async function renderListCommandPage(token, chatId, commandKey, pageZeroBased, opts = {}) {
     const items = await queryItemsForPaginatedList(commandKey);
-    const { text, page } =
-        commandKey === "plan"
-            ? buildPlanListMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE)
-            : buildListCommandMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
+    const { text, page } = buildListCommandMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
     const keyboard = buildListCommandKeyboard(items, commandKey, page, COMMAND_TASKS_PAGE_SIZE);
     if (opts.editMessageId != null) {
         await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
@@ -933,81 +835,6 @@ function parseInlineSlashPrefix(text) {
     return { prefix, prefixNorm: prefix.toLowerCase(), content };
 }
 
-/** Quita tildes para comparar habito/hábito/Hábito de forma uniforme. */
-function stripDiacritics(str) {
-    return String(str)
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-}
-
-/** true si el prefijo es habito o hábito (sin importar mayúsculas/acentos). */
-function isHabitSlashPrefix(parsed) {
-    if (!parsed) return false;
-    return stripDiacritics(parsed.prefix).toLowerCase() === "habito";
-}
-
-/**
- * Prioridad: antes de Area/ tarea. Solo prefijos habito/ y hábito/ (acentos opcionales).
- * @returns {Promise<boolean>} true si el mensaje era comando de hábito.
- */
-async function tryHandleHabitSlashCommand(token, chatId, text) {
-    const parsed = parseInlineSlashPrefix(text);
-    if (!isHabitSlashPrefix(parsed)) return false;
-
-    if (!parsed.content.trim()) {
-        await telegramSendMessage(token, chatId, "⚠️ Indica el hábito, mi rey no sea asi, colaboreme pille algo como `habito/ Oración`.");
-        return true;
-    }
-
-    const habitName = parsed.content.trim();
-    let dailyResult;
-    try {
-        dailyResult = await ensureDailyHabitPage();
-    } catch (e) {
-        await telegramSendMessage(token, chatId, `${e.message || String(e)} Tranqui mi rey, lo checamos asap!.`);
-        return true;
-    }
-    if (!dailyResult?.ok || !dailyResult.page_id) {
-        await telegramSendMessage(token, chatId, "❌ No pude asegurar la página diaria de hábitos mi rey ay me disculparas ala carachas.");
-        return true;
-    }
-
-    const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
-    if (!markResult.ok) {
-        await telegramSendMessage(token, chatId, `${markResult.message} Tranqui mi papacho lo ajustamos sumercito rela.`);
-        return true;
-    }
-
-    const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${markResult.resolvedName} Registrado my littele associated!.`;
-    if (habitsLink) msg += `\n${habitsLink}`;
-    await telegramSendMessage(token, chatId, msg);
-    return true;
-}
-
-async function sendHabitIntentResult(token, chatId, habitName) {
-    let dailyResult;
-    try {
-        dailyResult = await ensureDailyHabitPage();
-    } catch (e) {
-        await telegramSendMessage(token, chatId, `${e.message || String(e)} Tranqui mi rey lo revisamos para antier!.`);
-        return;
-    }
-    if (!dailyResult?.ok || !dailyResult.page_id) {
-        await telegramSendMessage(token, chatId, "❌ No pude asegurar la página diaria de hábitos mi rey mala mia, pero reviselo!");
-        return;
-    }
-    const markResult = await markHabitAsDone(habitName, dailyResult.page_id);
-    if (!markResult.ok) {
-        await telegramSendMessage(token, chatId, `${markResult.message} Tranqui mi papacho lo ajustamos ya mismo!.`);
-        return;
-    }
-    const habitsLink = getHabitsDatabaseNotionUrl();
-    let msg = `✅ Hábito ${markResult.resolvedName} Registrado my little associated!`;
-    if (habitsLink) msg += `\n${habitsLink}`;
-    await telegramSendMessage(token, chatId, msg);
-}
-
 function noteTitleFromNotaBody(body) {
     const line = body.split("\n")[0].trim();
     if (!line) return "Nota";
@@ -1128,6 +955,30 @@ module.exports = async function handler(req, res) {
 
     if (cb) {
         const cbData = cb.data || "";
+
+        if (cbData.startsWith(HABIT_CALLBACK_PREFIX)) {
+            const propertyKey = decodeHabitPropertyCallback(cbData);
+            if (!propertyKey) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Hábito inválido.");
+                return res.status(200).send("OK");
+            }
+            const pendingState = await getPendingHabitsForToday();
+            if (!pendingState.ok) {
+                await telegramAnswerCallbackQuery(token, cb.id, "No pude leer hábitos.");
+                return res.status(200).send("OK");
+            }
+            const markResult = await markHabitCheckboxDone(propertyKey, pendingState.pageId);
+            if (!markResult.ok) {
+                await telegramAnswerCallbackQuery(token, cb.id, markResult.message.slice(0, 200));
+                return res.status(200).send("OK");
+            }
+            await telegramAnswerCallbackQuery(token, cb.id, `✅ ${markResult.resolvedName}`);
+            await sendHabitsPendingMenu(token, cb.message.chat.id, {
+                editMessageId: cb.message.message_id,
+            });
+            return res.status(200).send("OK");
+        }
+
         const navMatch = cbData.match(/^nav_p(\d+)_([a-z]+)$/);
         if (navMatch) {
             const targetPageHuman = Number(navMatch[1]);
@@ -1164,71 +1015,22 @@ module.exports = async function handler(req, res) {
                 await telegramAnswerCallbackQuery(
                     token,
                     cb.id,
-                    commandKey === "plan" ? "Ese proyecto ya no está disponible. Meta bien el dedo mijo" : "Esa tarea ya no está disponible.  Meta bien el dedo mijo"
+                    "Esa tarea ya no está disponible. Meta bien el dedo mijo"
                 );
                 return res.status(200).send("OK");
             }
             const chatId = cb.message.chat.id;
-            if (commandKey === "plan") {
-                const dateLabel = formatTaskDateLabel(selectedItem.fechaYmd);
-                const tipo = escapeTelegramMarkdown(selectedItem.tipo || "Sin tipo");
-                const actionKeyboard = buildInteractivePlanActionsKeyboard(selectedItem.id);
-                const actionMsg = await telegramSendMessageAndGetResult(
-                    token,
-                    chatId,
-                    `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n📅 *${dateLabel}*\n🏷️ *${tipo}*\n¿Qué acción quieres ejecutar?`,
-                    actionKeyboard
-                );
-                interactivePlanActionContext.set(`${chatId}:${actionMsg.message_id}`, {
-                    pageId: selectedItem.id,
-                    itemName: selectedItem.name,
-                });
-            } else {
-                const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedItem.id);
-                const actionMsg = await telegramSendMessageAndGetResult(
-                    token,
-                    chatId,
-                    `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
-                    actionKeyboard
-                );
-                interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
-                    pageId: selectedItem.id,
-                    taskName: selectedItem.name,
-                });
-            }
-            await telegramAnswerCallbackQuery(token, cb.id);
-            return res.status(200).send("OK");
-        }
-
-        if (cbData.startsWith("iproj_done:") || cbData.startsWith("iproj_close:")) {
-            const [action, pageId] = cbData.split(":");
-            const chatId = cb.message.chat.id;
-            const actionMessageId = cb.message.message_id;
-
-            if (action === "iproj_close") {
-                await telegramDeleteMessage(token, chatId, actionMessageId);
-                clearInteractivePlanActionContext(chatId, actionMessageId);
-                await telegramAnswerCallbackQuery(token, cb.id);
-                return res.status(200).send("OK");
-            }
-
-            if (!pageId) {
-                await telegramAnswerCallbackQuery(token, cb.id, "No pude identificar el proyecto.");
-                return res.status(200).send("OK");
-            }
-
-            const result = await updateNotionProyectoEstado(pageId, PLAN_STATUS_COMPLETED);
-            if (result.ok) {
-                await telegramDeleteMessage(token, chatId, actionMessageId);
-                clearInteractivePlanActionContext(chatId, actionMessageId);
-            }
-            await telegramSendMessage(
+            const actionKeyboard = buildInteractiveTaskActionsKeyboard(selectedItem.id);
+            const actionMsg = await telegramSendMessageAndGetResult(
                 token,
                 chatId,
-                result.ok
-                    ? `✅ Proyecto completado mi rey!: ${result.itemName}`
-                    : `${result.text} Tranqui mi papacho lo intentamos de nuevo!`
+                `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
+                actionKeyboard
             );
+            interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
+                pageId: selectedItem.id,
+                taskName: selectedItem.name,
+            });
             await telegramAnswerCallbackQuery(token, cb.id);
             return res.status(200).send("OK");
         }
@@ -1458,17 +1260,13 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `nota/`, `habito/`, `/listam` (mañana) o `/listav`. /help para el manual, pero haga algo! no se quede mirando que no esta en venta!"
+                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `Matrimonio/ tarea`, `nota/`, `/h` (hábitos) o `/lm` (mañana). /help para el manual!"
             );
             return res.status(200).send("OK");
         }
 
         if (text === "/help") {
             await telegramSendMessage(token, chatId, helpMessage.trim(), null, "HTML");
-            return res.status(200).send("OK");
-        }
-
-        if (await tryHandleHabitSlashCommand(token, chatId, text)) {
             return res.status(200).send("OK");
         }
 
@@ -1486,54 +1284,20 @@ module.exports = async function handler(req, res) {
         }
 
         if (text.startsWith("/")) {
-            const reprogramaMatch = text.match(/^\/reprogramar?\s+(\d+)\s+(.+)$/i);
-            if (reprogramaMatch) {
-                const taskIndex = Number(reprogramaMatch[1]) - 1;
-                const naturalDateText = reprogramaMatch[2].trim();
-                const { tasks } = await getMonthTasks();
-
-                if (taskIndex < 0 || taskIndex >= tasks.length) {
-                    await telegramSendMessage(token, chatId, `❌ Índice inválido mijo! Pero que esta haciendo? Use un número entre 1 y ${tasks.length || 1}.`);
-                    return res.status(200).send("OK");
-                }
-
-                const selectedTask = tasks[taskIndex];
-                const pageId = selectedTask?.id;
-                const result = await rescheduleTaskDateByPageId(pageId, naturalDateText);
-                if (!result.ok) {
-                    await telegramSendMessage(token, chatId, `${result.error} Tranqui mi rey lo volvemos a intentar ya mismo!`);
-                    return res.status(200).send("OK");
-                }
-
-                await telegramSendMessage(
-                    token,
-                    chatId,
-                    `✅ Tarea reprogramada, mi rey: ${selectedTask.name}\nNueva fecha: ${result.dateYmd}`
-                );
+            if (text === "/h") {
+                await sendHabitsPendingMenu(token, chatId);
                 return res.status(200).send("OK");
             }
-            if (text === "/listad") {
-                await renderListCommandPage(token, chatId, "listad", 0);
+            if (text === "/ld") {
+                await renderListCommandPage(token, chatId, "ld", 0);
                 return res.status(200).send("OK");
             }
-            if (text === "/listas") {
-                await renderListCommandPage(token, chatId, "listas", 0);
+            if (text === "/lm") {
+                await renderListCommandPage(token, chatId, "lm", 0);
                 return res.status(200).send("OK");
             }
-            if (text === "/listam") {
-                await renderListCommandPage(token, chatId, "listam", 0);
-                return res.status(200).send("OK");
-            }
-            if (text === "/listames") {
-                await renderListCommandPage(token, chatId, "listames", 0);
-                return res.status(200).send("OK");
-            }
-            if (text === "/listav") {
-                await renderListCommandPage(token, chatId, "listav", 0);
-                return res.status(200).send("OK");
-            }
-            if (text === "/plan") {
-                await renderListCommandPage(token, chatId, "plan", 0);
+            if (text === "/lv") {
+                await renderListCommandPage(token, chatId, "lv", 0);
                 return res.status(200).send("OK");
             }
             if (text === "/syncminutas") {
@@ -1645,16 +1409,6 @@ module.exports = async function handler(req, res) {
             } else {
                 await telegramSendMessage(token, chatId, `📝 Nota guardada mi rey: *${title}*`);
             }
-            return res.status(200).send("OK");
-        }
-
-        if (intent === "HABIT") {
-            let habitName = (data.habitName || "").trim();
-            if (!habitName) {
-                await telegramSendMessage(token, chatId, "⚠️ No identifiqué el hábito mi papacho, como dices que dijiste?");
-                return res.status(200).send("OK");
-            }
-            await sendHabitIntentResult(token, chatId, habitName);
             return res.status(200).send("OK");
         }
 

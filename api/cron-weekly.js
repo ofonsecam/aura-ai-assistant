@@ -1,5 +1,5 @@
 /**
- * Resumen semanal (Vercel: `0 1 * * 0` UTC ≈ domingo 20:00 en Bogotá).
+ * Resumen semanal (Vercel: `0 1 * * 1` UTC = domingo 20:00 Bogotá).
  * Encabezado de logros (últimos 7 días, Estado Hecho) + reporte detallado semanal.
  */
 const { getWeeklyCronReportData, getCompletedTasksCountLast7DaysBogota } = require("./notionTaskPage");

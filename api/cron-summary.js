@@ -1,5 +1,9 @@
 const { getDailyTasks, getOverdueTasks } = require("./notionTaskPage");
 
+/**
+ * Resumen de tareas del día (Vercel cron-summary, UTC → Bogotá):
+ * 0 12, 0 15, 0 18, 0 21, 0 1 * * * → 7:00, 10:00, 13:00, 16:00 y 20:00 COL.
+ */
 export default async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;

@@ -33,6 +33,13 @@ function loadHandler(notionOverrides = {}) {
         createNotionActivityPage: async () => ({ ok: true }),
         parseExpenseAmount: () => 0,
         markHabitAsDone: async () => ({ ok: true, resolvedName: "Habito" }),
+        markHabitCheckboxDone: async () => ({ ok: true, resolvedName: "Oración" }),
+        getPendingHabitsForToday: async () => ({
+            ok: true,
+            pageId: "habit-page",
+            pending: [{ propertyKey: "Oración", name: "Oración" }],
+            allDone: false,
+        }),
         normalizeNotionArea: (v) => v,
         readNotionTasks: async () => ({ tasks: [] }),
         getDailyTasks: async () => ({ tasks: [] }),
@@ -226,7 +233,7 @@ test("pick_ en lista envía mensaje de acción sin editar la lista", async () =>
         body: {
             callback_query: {
                 id: "cb-pick",
-                data: "pick_1_listad_p1",
+                data: "pick_1_ld_p1",
                 message: { chat: { id: 42 }, message_id: 50 },
             },
         },
@@ -274,7 +281,7 @@ test("itask_done exitoso elimina el mensaje de acción", async () => {
     assert.equal(deleted.body.message_id, 88);
 });
 
-test("/plan lista proyectos con paginación y pick en cascada", async () => {
+test("/h muestra hábitos pendientes con botones", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "test-token";
     const apiCalls = [];
 
@@ -283,75 +290,22 @@ test("/plan lista proyectos con paginación y pick en cascada", async () => {
         const body = options.body ? JSON.parse(options.body) : {};
         apiCalls.push({ endpoint, body });
         if (endpoint === "sendMessage") {
-            return { ok: true, json: async () => ({ ok: true, result: { message_id: 1200 } }) };
+            return { ok: true, json: async () => ({ ok: true, result: { message_id: 2001 } }) };
         }
-        return { ok: true, json: async () => ({ ok: true }) };
-    };
-
-    const handler = loadHandler({
-        queryNotionPlanProjects: async () => [
-            { id: "p1", name: "Proyecto Alpha", fechaYmd: "2026-06-01", tipo: "Infra", status: "En curso" },
-        ],
-    });
-
-    const listReq = {
-        method: "POST",
-        body: { message: { chat: { id: 55 }, text: "/plan" } },
-    };
-    const listRes = createMockRes();
-    await handler(listReq, listRes);
-    assert.equal(listRes.statusCode, 200);
-    const listSend = apiCalls.find((c) => c.endpoint === "sendMessage");
-    assert.ok(listSend);
-    assert.match(listSend.body.text, /Proyecto Alpha/);
-    assert.match(listSend.body.text, /Infra/);
-    assert.equal(listSend.body.reply_markup.inline_keyboard[0][0].callback_data, "pick_1_plan_p1");
-
-    const pickReq = {
-        method: "POST",
-        body: {
-            callback_query: {
-                id: "cb-plan-pick",
-                data: "pick_1_plan_p1",
-                message: { chat: { id: 55 }, message_id: 60 },
-            },
-        },
-    };
-    const pickRes = createMockRes();
-    await handler(pickReq, pickRes);
-    assert.equal(pickRes.statusCode, 200);
-    const pickSend = apiCalls.filter((c) => c.endpoint === "sendMessage").pop();
-    assert.match(pickSend.body.text, /Proyecto Alpha/);
-    assert.equal(pickSend.body.reply_markup.inline_keyboard[0][0].callback_data, "iproj_done:p1");
-    assert.equal(pickSend.body.reply_markup.inline_keyboard[0][1].callback_data, "iproj_close:p1");
-});
-
-test("iproj_close elimina el mensaje de acción del plan", async () => {
-    process.env.TELEGRAM_BOT_TOKEN = "test-token";
-    const apiCalls = [];
-
-    global.fetch = async (url, options = {}) => {
-        const endpoint = String(url).split("/").pop();
-        const body = options.body ? JSON.parse(options.body) : {};
-        apiCalls.push({ endpoint, body });
         return { ok: true, json: async () => ({ ok: true }) };
     };
 
     const handler = loadHandler();
     const req = {
         method: "POST",
-        body: {
-            callback_query: {
-                id: "cb-close",
-                data: "iproj_close:p1",
-                message: { chat: { id: 3 }, message_id: 44 },
-            },
-        },
+        body: { message: { chat: { id: 12 }, text: "/h" } },
     };
     const res = createMockRes();
     await handler(req, res);
+
     assert.equal(res.statusCode, 200);
-    const deleted = apiCalls.find((c) => c.endpoint === "deleteMessage");
-    assert.ok(deleted);
-    assert.equal(deleted.body.message_id, 44);
+    const send = apiCalls.find((c) => c.endpoint === "sendMessage");
+    assert.ok(send);
+    assert.match(send.body.text, /Oración/);
+    assert.ok(send.body.reply_markup.inline_keyboard.length > 0);
 });
