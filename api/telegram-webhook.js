@@ -61,9 +61,7 @@ __________________________________________________________________
 
 🛠 Gestión de Tareas
 
-Área/ Tarea → Crea tarea (ej. Matrimonio/ Plan de cita)
 Área/ ver → Filtra pendientes
-Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 /ld → Ver tareas del día (hoy)
 /lm → Ver tareas de mañana
@@ -71,17 +69,17 @@ Nota: Para Iglesia, usa el prefijo Iglesia/.
 
 ⛪️ Tareas pendientes de reuniones 
 
-/syncminutas - Sincroniza tareas pendientes desde las minutas del obispado o reuniones grabadas.
+/syncminutas - Sincroniza tareas pendientes de las reuniones grabadas.
 
 📝 Notas y Hábitos
 
-/Nota/ [Texto] → Envía a Inbox
+/Nota [Nota/Texto] → Envía a Inbox
 /h → Hábitos pendientes de hoy (botones para marcar)
 
 📅 Google Calendar
 
-meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento (duración en horas; default 0.5)
-Ejemplo: meeting/ 05 30 2026 14:30 1.5 Entrevista con Handoff
+meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento. 
+Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
 💰 Finanzas
 
