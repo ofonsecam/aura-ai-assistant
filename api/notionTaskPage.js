@@ -1453,7 +1453,7 @@ async function fetchHabitsDatabaseCheckboxPropertyNames() {
     const data = await res.json();
     const props = data.properties || {};
     const names = Object.keys(props).filter((k) => props[k]?.type === 'checkbox');
-    names.sort((a, b) => a.localeCompare(b, 'es'));
+    names.sort((a, b) => String(a).localeCompare(String(b), 'es'));
     habitsCheckboxSchemaCache = { names, fetchedAt: now };
     return { ok: true, names };
 }
@@ -1632,7 +1632,13 @@ async function getHabitPageCheckboxStates(pageId) {
 /**
  * Hábitos pendientes (checkbox false) del día actual en Bogotá.
  * @returns {Promise<
- *   | { ok: true, pageId: string, pending: { propertyKey: string, name: string }[], allDone: boolean }
+ *   | {
+ *       ok: true,
+ *       pageId: string,
+ *       pending: { propertyKey: string, name: string }[],
+ *       sortedCheckboxNames: string[],
+ *       allDone: boolean,
+ *     }
  *   | { ok: false, message: string }
  * >}
  */
@@ -1645,19 +1651,39 @@ async function getPendingHabitsForToday() {
         const statesResult = await getHabitPageCheckboxStates(daily.page_id);
         if (!statesResult.ok) return statesResult;
 
-        const pending = Object.entries(statesResult.states)
-            .filter(([, done]) => !done)
-            .map(([propertyKey]) => ({ propertyKey, name: propertyKey }));
+        const schema = await fetchHabitsDatabaseCheckboxPropertyNames();
+        if (!schema.ok) return schema;
+
+        const pending = schema.names
+            .filter((propertyKey) => !statesResult.states[propertyKey])
+            .map((propertyKey) => ({ propertyKey, name: propertyKey }));
 
         return {
             ok: true,
             pageId: daily.page_id,
             pending,
+            sortedCheckboxNames: schema.names,
             allDone: pending.length === 0,
         };
     } catch (e) {
         return { ok: false, message: e?.message || String(e) };
     }
+}
+
+/**
+ * Resuelve el nombre exacto de propiedad checkbox por índice en el esquema ordenado alfabéticamente.
+ * Stateless: reconsulta Notion en cada invocación.
+ * @param {number} index
+ * @returns {Promise<{ ok: true, propertyKey: string } | { ok: false, message: string }>}
+ */
+async function resolveHabitCheckboxPropertyBySortedIndex(index) {
+    const schema = await fetchHabitsDatabaseCheckboxPropertyNames();
+    if (!schema.ok) return schema;
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= schema.names.length) {
+        return { ok: false, message: '❌ Índice de hábito inválido.' };
+    }
+    return { ok: true, propertyKey: schema.names[i] };
 }
 
 /**
@@ -1793,6 +1819,7 @@ module.exports = {
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
     getPendingHabitsForToday,
+    resolveHabitCheckboxPropertyBySortedIndex,
     markHabitCheckboxDone,
     queryNotionPlanProjects,
     updateNotionProyectoEstado,

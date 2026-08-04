@@ -13,6 +13,7 @@ const {
     updateNotionTaskStatus,
     deleteNotionTask,
     getPendingHabitsForToday,
+    resolveHabitCheckboxPropertyBySortedIndex,
     markHabitCheckboxDone,
     parseTaskText,
     taskDateToBogotaYmd,
@@ -20,7 +21,7 @@ const {
 const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
 const {
     HABIT_CALLBACK_PREFIX,
-    decodeHabitPropertyCallback,
+    decodeHabitIndexCallback,
     buildHabitsPendingMessage,
     buildHabitsPendingKeyboard,
 } = require("./habitTelegramMenu");
@@ -57,7 +58,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.0
+📖 Manual de Aura AI v2.9.1
 
 🛠 Gestión de Tareas
 
@@ -436,11 +437,11 @@ async function sendHabitsPendingMenu(token, chatId, opts = {}) {
         return result;
     }
     const text = buildHabitsPendingMessage(result.pending, { cron: opts.cron });
-    const keyboard = buildHabitsPendingKeyboard(result.pending);
+    const keyboard = buildHabitsPendingKeyboard(result.pending, result.sortedCheckboxNames);
     if (opts.editMessageId != null) {
         await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
     } else {
-        await telegramSendMessage(token, chatId, text, keyboard);
+        await telegramSendMessageAndGetResult(token, chatId, text, keyboard);
     }
     if (opts.callbackQueryId) {
         await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
@@ -955,25 +956,42 @@ module.exports = async function handler(req, res) {
         const cbData = cb.data || "";
 
         if (cbData.startsWith(HABIT_CALLBACK_PREFIX)) {
-            const propertyKey = decodeHabitPropertyCallback(cbData);
-            if (!propertyKey) {
+            const habitIndex = decodeHabitIndexCallback(cbData);
+            if (habitIndex == null) {
                 await telegramAnswerCallbackQuery(token, cb.id, "Hábito inválido.");
                 return res.status(200).send("OK");
             }
-            const pendingState = await getPendingHabitsForToday();
-            if (!pendingState.ok) {
-                await telegramAnswerCallbackQuery(token, cb.id, "No pude leer hábitos.");
-                return res.status(200).send("OK");
+            try {
+                const [pendingState, resolvedKey] = await Promise.all([
+                    getPendingHabitsForToday(),
+                    resolveHabitCheckboxPropertyBySortedIndex(habitIndex),
+                ]);
+                if (!pendingState.ok) {
+                    await telegramAnswerCallbackQuery(token, cb.id, "No pude leer hábitos.");
+                    return res.status(200).send("OK");
+                }
+                if (!resolvedKey.ok) {
+                    await telegramAnswerCallbackQuery(token, cb.id, resolvedKey.message.slice(0, 200));
+                    return res.status(200).send("OK");
+                }
+                const markResult = await markHabitCheckboxDone(
+                    resolvedKey.propertyKey,
+                    pendingState.pageId
+                );
+                await telegramAnswerCallbackQuery(
+                    token,
+                    cb.id,
+                    markResult.ok ? `✅ ${markResult.resolvedName}` : markResult.message.slice(0, 200)
+                );
+                if (markResult.ok) {
+                    await sendHabitsPendingMenu(token, cb.message.chat.id, {
+                        editMessageId: cb.message.message_id,
+                    });
+                }
+            } catch (habitErr) {
+                console.error("Habit callback error:", habitErr);
+                await telegramAnswerCallbackQuery(token, cb.id, "Error al marcar hábito.");
             }
-            const markResult = await markHabitCheckboxDone(propertyKey, pendingState.pageId);
-            if (!markResult.ok) {
-                await telegramAnswerCallbackQuery(token, cb.id, markResult.message.slice(0, 200));
-                return res.status(200).send("OK");
-            }
-            await telegramAnswerCallbackQuery(token, cb.id, `✅ ${markResult.resolvedName}`);
-            await sendHabitsPendingMenu(token, cb.message.chat.id, {
-                editMessageId: cb.message.message_id,
-            });
             return res.status(200).send("OK");
         }
 

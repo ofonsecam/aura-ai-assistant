@@ -26,7 +26,7 @@ export default async function handler(req, res) {
         }
 
         const text = buildHabitsPendingMessage(result.pending, { cron: true });
-        const keyboard = buildHabitsPendingKeyboard(result.pending);
+        const keyboard = buildHabitsPendingKeyboard(result.pending, result.sortedCheckboxNames);
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",

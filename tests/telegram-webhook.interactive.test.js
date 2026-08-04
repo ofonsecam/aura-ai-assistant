@@ -38,7 +38,12 @@ function loadHandler(notionOverrides = {}) {
             ok: true,
             pageId: "habit-page",
             pending: [{ propertyKey: "Oración", name: "Oración" }],
+            sortedCheckboxNames: ["Oración"],
             allDone: false,
+        }),
+        resolveHabitCheckboxPropertyBySortedIndex: async (index) => ({
+            ok: true,
+            propertyKey: ["Oración"][index] || null,
         }),
         normalizeNotionArea: (v) => v,
         readNotionTasks: async () => ({ tasks: [] }),
