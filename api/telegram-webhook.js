@@ -2,6 +2,9 @@ const {
     createNotionTaskPage,
     createNotionNotePage,
     createNotionExpensePage,
+    createNotionTensionPage,
+    parseTensionSlashContent,
+    TENSION_INVALID_FORMAT_MSG,
     parseExpenseAmount,
     normalizeNotionArea,
     readNotionTasks,
@@ -58,7 +61,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.1
+📖 Manual de Aura AI v2.9.3
 
 🛠 Gestión de Tareas
 
@@ -85,6 +88,8 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 💰 Finanzas
 
 $ [Monto] [Concepto] → Registro gasto
+
+🩺 Tensión: T/ <Oscar|Yulis> <120/80> → Registra la toma de tensión en DB_Tension
 __________________________________________________________________`;
 
 const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
@@ -848,6 +853,37 @@ async function handleInlineSlashPrefix(token, chatId, text) {
     if (!parsed) return false;
 
     const { prefix, prefixNorm, content } = parsed;
+
+    if (prefixNorm === "t") {
+        const tensionParsed = parseTensionSlashContent(content);
+        if (!tensionParsed.ok) {
+            await telegramSendMessage(token, chatId, TENSION_INVALID_FORMAT_MSG);
+            return true;
+        }
+        try {
+            const result = await createNotionTensionPage({
+                quien: tensionParsed.quien,
+                tension: tensionParsed.tension,
+            });
+            if (typeof result === "string") {
+                await telegramSendMessage(token, chatId, result);
+            } else {
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    `✅ Tensión registrada con éxito para ${result.quien}: ${result.tension} (${result.dateYmd})`
+                );
+            }
+        } catch (tensionErr) {
+            console.error("Tension register error:", tensionErr);
+            await telegramSendMessage(
+                token,
+                chatId,
+                `❌ No pude registrar la tensión (${tensionErr.message || "error de red o API"}). Inténtalo de nuevo.`
+            );
+        }
+        return true;
+    }
 
     if (prefixNorm === "nota") {
         if (!content) {

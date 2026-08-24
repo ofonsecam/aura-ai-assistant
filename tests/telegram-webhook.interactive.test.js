@@ -29,6 +29,23 @@ function loadHandler(notionOverrides = {}) {
         createNotionTaskPage: async () => ({ ok: true, id: "x", url: "", databaseId: "db", databaseName: "DB" }),
         createNotionNotePage: async () => ({ ok: true }),
         createNotionExpensePage: async () => ({ ok: true }),
+        createNotionTensionPage: async () => ({
+            ok: true,
+            dateYmd: "2026-08-24",
+            quien: "Oscar",
+            tension: "126/86",
+        }),
+        parseTensionSlashContent: (content) => {
+            const raw = String(content || "").replace(/\s+/g, " ").trim();
+            const m = raw.match(/^(\S+)\s+(\d{2,3})\s*\/\s*(\d{2,3})$/);
+            if (!m) return { ok: false };
+            const key = m[1].toLowerCase();
+            const quien = key === "oscar" ? "Oscar" : key === "yulis" ? "Yulis" : null;
+            if (!quien) return { ok: false };
+            return { ok: true, quien, tension: `${m[2]}/${m[3]}` };
+        },
+        TENSION_INVALID_FORMAT_MSG:
+            "⚠️ Formato inválido. Usa: T/ <Oscar|Yulis> <Sistólica/Diastólica> (Ej: T/ Oscar 126/86)",
         createNotionMinutePage: async () => ({ ok: true }),
         createNotionActivityPage: async () => ({ ok: true }),
         parseExpenseAmount: () => 0,

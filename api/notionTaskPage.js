@@ -32,6 +32,14 @@ const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
 /** Base de hábitos: prioridad NOTION_HABITS_ID (Vercel), alias NOTION_HABITS_DATABASE_ID. */
 const habitsDatabaseId = (process.env.NOTION_HABITS_ID || process.env.NOTION_HABITS_DATABASE_ID || '').trim();
 const notionExpensesId = (process.env.NOTION_EXPENSES_ID || '').trim();
+/** Base de tensión arterial (`DB_Tension`). */
+const notionTensionId = (process.env.NOTION_DB_TENSION_ID || '').trim();
+const PROP_TENSION_TITLE = 'YYYY MM DD';
+const PROP_TENSION_FECHA = 'Fecha';
+const PROP_TENSION_VALUE = 'Tension';
+const PROP_TENSION_QUIEN = 'Quien';
+const TENSION_INVALID_FORMAT_MSG =
+    '⚠️ Formato inválido. Usa: T/ <Oscar|Yulis> <Sistólica/Diastólica> (Ej: T/ Oscar 126/86)';
 /** Propiedad tipo fecha en la base Inbox Gastos (`NOTION_EXPENSES_ID`). Debe coincidir con el nombre en Notion. */
 const PROP_EXPENSE_FECHA = 'Fecha de gasto';
 const notionMinutasId = (process.env.NOTION_MINUTAS_ID || '').trim();
@@ -1323,6 +1331,91 @@ async function createNotionExpensePage(amount, description) {
 }
 
 /**
+ * Normaliza Quién al valor exacto del select en Notion (`Oscar` | `Yulis`).
+ * @param {string} raw
+ * @returns {string|null}
+ */
+function normalizeTensionQuien(raw) {
+    const key = String(raw || '').trim().toLowerCase();
+    if (key === 'oscar') return 'Oscar';
+    if (key === 'yulis') return 'Yulis';
+    return null;
+}
+
+/**
+ * Parsea el contenido tras `T/` / `t/`: persona + sistólica/diastólica.
+ * @param {string} content
+ * @returns {{ ok: true, quien: string, tension: string } | { ok: false }}
+ */
+function parseTensionSlashContent(content) {
+    const raw = String(content || '').replace(/\s+/g, ' ').trim();
+    const m = raw.match(/^(\S+)\s+(\d{2,3})\s*\/\s*(\d{2,3})$/);
+    if (!m) return { ok: false };
+    const quien = normalizeTensionQuien(m[1]);
+    if (!quien) return { ok: false };
+    return { ok: true, quien, tension: `${m[2]}/${m[3]}` };
+}
+
+/**
+ * Crea una fila en DB_Tension (NOTION_DB_TENSION_ID).
+ * Título `YYYY MM DD` = fecha civil Bogotá; Fecha = ISO 8601 con offset -05:00;
+ * Tension = rich_text; Quien = select Oscar|Yulis.
+ * @param {{ quien: string, tension: string }} payload
+ */
+async function createNotionTensionPage({ quien, tension }) {
+    if (!notionTensionId) {
+        return '❌ Falta NOTION_DB_TENSION_ID en el entorno (Vercel → Variables).';
+    }
+    if (!NOTION_UUID_RE.test(notionTensionId)) {
+        return '❌ NOTION_DB_TENSION_ID no es un UUID válido (sin comillas ni espacios extra). Revisa Vercel.';
+    }
+    if (!notionToken) {
+        return '❌ Falta NOTION_TOKEN en el entorno.';
+    }
+    const quienExact = normalizeTensionQuien(quien);
+    if (!quienExact) {
+        return TENSION_INVALID_FORMAT_MSG;
+    }
+    const reading = String(tension ?? '').replace(/\s+/g, '').trim();
+    if (!/^\d{2,3}\/\d{2,3}$/.test(reading)) {
+        return TENSION_INVALID_FORMAT_MSG;
+    }
+    const nowIso = getNowBogotaIsoForNotionDateTime();
+    const dateYmd = nowIso.slice(0, 10);
+    const properties = {
+        [PROP_TENSION_TITLE]: { title: [{ text: { content: dateYmd } }] },
+        [PROP_TENSION_FECHA]: { date: { start: nowIso } },
+        [PROP_TENSION_VALUE]: { rich_text: toRichTextSegments(reading) },
+        [PROP_TENSION_QUIEN]: { select: { name: quienExact } },
+    };
+    try {
+        const res = await fetch('https://api.notion.com/v1/pages', {
+            method: 'POST',
+            headers: NOTION_HEADERS,
+            body: JSON.stringify({ parent: { database_id: notionTensionId }, properties }),
+        });
+        if (res.ok) {
+            const data = await res.json();
+            return { ok: true, id: data.id, url: data.url, dateYmd, quien: quienExact, tension: reading };
+        }
+        let detail = String(res.status);
+        try {
+            const errBody = await res.json();
+            if (errBody?.message) detail = `${res.status}: ${errBody.message}`;
+        } catch (_) {
+            /* ignore */
+        }
+        const hint404 =
+            res.status === 404
+                ? ' Comprueba en Notion que la integración tenga acceso a DB_Tension y que el ID sea el de la base.'
+                : '';
+        return `❌ Error Notion (${detail}).${hint404}`;
+    } catch (err) {
+        return `❌ Error Notion (${err.message || 'red o API'}).`;
+    }
+}
+
+/**
  * Minutas (NOTION_MINUTAS_ID): propiedades — Name (title), Fecha (date). Renombra aquí si en Notion usas otro título.
  * @param {string} title
  */
@@ -1798,6 +1891,10 @@ module.exports = {
     taskDateToBogotaYmd,
     createNotionNotePage,
     createNotionExpensePage,
+    createNotionTensionPage,
+    parseTensionSlashContent,
+    normalizeTensionQuien,
+    TENSION_INVALID_FORMAT_MSG,
     createNotionMinutePage,
     createNotionActivityPage,
     parseExpenseAmount,

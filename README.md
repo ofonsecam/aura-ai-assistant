@@ -19,6 +19,7 @@ Desarrollé un ecosistema de automatización proactiva integrando Telegram Bot A
 |--------|-----|
 | `/lista` | Lista o consulta de tareas según la lógica del bot. |
 | `/help` | Ayuda y descripción de comandos. |
+| `T/` | Registrar tensión arterial en `DB_Tension` (`T/ Oscar 126/86`). |
 | `+` | Añadir o registrar una tarea (según el contexto del mensaje). |
 | `hecho` | Marcar tarea(s) como completadas. |
 | `borrar` | Eliminar tarea(s) indicadas. |
@@ -34,6 +35,7 @@ Configura estas variables en Vercel (o en un archivo `.env` local con `vercel de
 | `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (`BotFather`). |
 | `MY_TELEGRAM_CHAT_ID` | Chat ID al que el bot envía resúmenes y alertas (crons). |
 | `GEMINI_API_KEY` | Clave de la API de Google AI (Gemini) para transcripción y extracción estructurada desde audio. |
+| `NOTION_DB_TENSION_ID` | ID de la base `DB_Tension` (tomas de presión arterial). |
 
 > **Nota:** Si añades otras integraciones (p. ej. webhooks adicionales), documenta aquí cualquier variable extra que uses.
 
