@@ -163,5 +163,6 @@ test("/help incluye el comando de tensión", async () => {
 
     const send = apiCalls.find((c) => c.endpoint === "sendMessage");
     assert.match(send.body.text, /Tensión/);
-    assert.match(send.body.text, /T\/ <Oscar\|Yulis>/);
+    assert.match(send.body.text, /T\/ Oscar\|Yulis/);
+    assert.equal(send.body.parse_mode, undefined);
 });

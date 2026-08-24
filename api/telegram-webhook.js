@@ -58,7 +58,7 @@ Reglas de fecha:
 - Si no puedes inferir una fecha confiable, deja "Fecha" en "" y conserva la tarea en "Name".`;
 }
 
-/** Cuerpo /help en texto plano (se envía con parse_mode HTML, sin etiquetas). */
+/** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
 📖 Manual de Aura AI v2.9.3
@@ -89,7 +89,7 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
 $ [Monto] [Concepto] → Registro gasto
 
-🩺 Tensión: T/ <Oscar|Yulis> <120/80> → Registra la toma de tensión en DB_Tension
+🩺 Tensión: T/ Oscar|Yulis 120/80 → Registra la toma de tensión en DB_Tension
 __________________________________________________________________`;
 
 const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
@@ -386,13 +386,49 @@ function parseGeminiJson(raw) {
 }
 
 async function telegramSendMessage(token, chatId, text, replyMarkup = null, parseMode = "Markdown") {
-    const body = { chat_id: chatId, text, parse_mode: parseMode };
-    if (replyMarkup) body.reply_markup = replyMarkup;
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
+    const post = async (mode) => {
+        const body = { chat_id: chatId, text };
+        if (mode) body.parse_mode = mode;
+        if (replyMarkup) body.reply_markup = replyMarkup;
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        let data = null;
+        try {
+            data = await res.json();
+        } catch (_) {
+            data = null;
+        }
+        return { res, data };
+    };
+    try {
+        const first = await post(parseMode);
+        if (first.res.ok && first.data?.ok) return first.data;
+        console.error("[telegram] sendMessage failed", first.data?.description || first.res.status, {
+            parseMode,
+        });
+        if (parseMode) {
+            const retry = await post(null);
+            if (!retry.res.ok || !retry.data?.ok) {
+                console.error(
+                    "[telegram] sendMessage plain retry failed",
+                    retry.data?.description || retry.res.status
+                );
+            }
+            return retry.data;
+        }
+        return first.data;
+    } catch (err) {
+        console.error("[telegram] sendMessage exception", err);
+        try {
+            await post(null);
+        } catch (retryErr) {
+            console.error("[telegram] sendMessage plain retry exception", retryErr);
+        }
+        return null;
+    }
 }
 
 async function telegramSendMessageAndGetResult(token, chatId, text, replyMarkup = null, parseMode = "Markdown") {
@@ -829,6 +865,60 @@ function parseDollarExpenseMessage(text) {
     return { amountStr, concept };
 }
 
+function isTelegramSlashCommand(text, command) {
+    return new RegExp(`^/${command}(?:@\\w+)?$`, "i").test(String(text || "").trim());
+}
+
+/**
+ * Intercepta t/ / T/ y responde siempre (texto plano, sin parse_mode).
+ * @returns {Promise<boolean>}
+ */
+async function handleTensionSlashCommand(token, chatId, text) {
+    const raw = String(text || "").trim();
+    if (!/^[tT]\//.test(raw)) return false;
+    const content = raw.slice(raw.indexOf("/") + 1).trim();
+    console.log("[tension] enter", { chatId, content });
+    try {
+        const tensionParsed = parseTensionSlashContent(content);
+        if (!tensionParsed.ok) {
+            console.log("[tension] invalid format");
+            await telegramSendMessage(token, chatId, TENSION_INVALID_FORMAT_MSG, null, null);
+            return true;
+        }
+        const result = await createNotionTensionPage({
+            quien: tensionParsed.quien,
+            tension: tensionParsed.tension,
+        });
+        if (typeof result === "string") {
+            console.error("[tension] notion error", result);
+            await telegramSendMessage(token, chatId, result, null, null);
+        } else {
+            console.log("[tension] ok", {
+                quien: result.quien,
+                tension: result.tension,
+                dateYmd: result.dateYmd,
+            });
+            await telegramSendMessage(
+                token,
+                chatId,
+                `✅ Tensión registrada con éxito mi papacho para ${result.quien}: ${result.tension} (${result.dateYmd})`,
+                null,
+                null
+            );
+        }
+    } catch (tensionErr) {
+        console.error("[tension] exception", tensionErr);
+        await telegramSendMessage(
+            token,
+            chatId,
+            `❌ No pude registrar la tensión my little assosiate (${tensionErr.message || "error de red o API"}). Inténtalo de nuevo.`,
+            null,
+            null
+        );
+    }
+    return true;
+}
+
 function parseInlineSlashPrefix(text) {
     if (!text || text.startsWith("/") || !text.includes("/")) return null;
     if (/^https?:\/\//i.test(text)) return null;
@@ -855,34 +945,7 @@ async function handleInlineSlashPrefix(token, chatId, text) {
     const { prefix, prefixNorm, content } = parsed;
 
     if (prefixNorm === "t") {
-        const tensionParsed = parseTensionSlashContent(content);
-        if (!tensionParsed.ok) {
-            await telegramSendMessage(token, chatId, TENSION_INVALID_FORMAT_MSG);
-            return true;
-        }
-        try {
-            const result = await createNotionTensionPage({
-                quien: tensionParsed.quien,
-                tension: tensionParsed.tension,
-            });
-            if (typeof result === "string") {
-                await telegramSendMessage(token, chatId, result);
-            } else {
-                await telegramSendMessage(
-                    token,
-                    chatId,
-                    `✅ Tensión registrada con éxito para ${result.quien}: ${result.tension} (${result.dateYmd})`
-                );
-            }
-        } catch (tensionErr) {
-            console.error("Tension register error:", tensionErr);
-            await telegramSendMessage(
-                token,
-                chatId,
-                `❌ No pude registrar la tensión (${tensionErr.message || "error de red o API"}). Inténtalo de nuevo.`
-            );
-        }
-        return true;
+        return handleTensionSlashCommand(token, chatId, text);
     }
 
     if (prefixNorm === "nota") {
@@ -1243,8 +1306,31 @@ module.exports = async function handler(req, res) {
     if (!message) return res.status(200).send("OK");
     const chatId = message.chat.id;
     const text = (message.text || "").trim();
+    console.log("[webhook] inbound", { chatId, text: text.slice(0, 200) });
 
     try {
+        if (/^[tT]\//.test(text)) {
+            await handleTensionSlashCommand(token, chatId, text);
+            return res.status(200).send("OK");
+        }
+
+        if (isTelegramSlashCommand(text, "help")) {
+            console.log("[help] sending manual");
+            try {
+                await telegramSendMessage(token, chatId, helpMessage.trim(), null, null);
+            } catch (helpErr) {
+                console.error("[help] exception", helpErr);
+                await telegramSendMessage(
+                    token,
+                    chatId,
+                    "⚠️ No pude enviar el manual mi socio mala mia. Revise ASAP los logs de Vercel.",
+                    null,
+                    null
+                );
+            }
+            return res.status(200).send("OK");
+        }
+
         if (message.reply_to_message?.from?.is_bot) {
             const replyPrompt = String(message.reply_to_message?.text || "").trim();
 
@@ -1308,7 +1394,7 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        if (text === "/start") {
+        if (isTelegramSlashCommand(text, "start")) {
             await telegramSendMessage(
                 token,
                 chatId,
@@ -1317,8 +1403,9 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
-        if (text === "/help") {
-            await telegramSendMessage(token, chatId, helpMessage.trim(), null, "HTML");
+        if (isTelegramSlashCommand(text, "help")) {
+            console.log("[help] sending manual (fallback)");
+            await telegramSendMessage(token, chatId, helpMessage.trim(), null, null);
             return res.status(200).send("OK");
         }
 
@@ -1336,23 +1423,23 @@ module.exports = async function handler(req, res) {
         }
 
         if (text.startsWith("/")) {
-            if (text === "/h") {
+            if (isTelegramSlashCommand(text, "h")) {
                 await sendHabitsPendingMenu(token, chatId);
                 return res.status(200).send("OK");
             }
-            if (text === "/ld") {
+            if (isTelegramSlashCommand(text, "ld")) {
                 await renderListCommandPage(token, chatId, "ld", 0);
                 return res.status(200).send("OK");
             }
-            if (text === "/lm") {
+            if (isTelegramSlashCommand(text, "lm")) {
                 await renderListCommandPage(token, chatId, "lm", 0);
                 return res.status(200).send("OK");
             }
-            if (text === "/lv") {
+            if (isTelegramSlashCommand(text, "lv")) {
                 await renderListCommandPage(token, chatId, "lv", 0);
                 return res.status(200).send("OK");
             }
-            if (text === "/syncminutas") {
+            if (isTelegramSlashCommand(text, "syncminutas")) {
                 await handleSyncMinutasCommand(token, chatId);
                 return res.status(200).send("OK");
             }
@@ -1471,15 +1558,23 @@ module.exports = async function handler(req, res) {
 
         await telegramSendMessage(token, chatId, "⚠️ Uy nooo, no le entendi, mas despacio porque me pierdo! Mire donde mete el dedo e ntenta de nuevo.");
     } catch (err) {
-        console.error(err);
+        console.error("[webhook] handler exception", err);
         if (err.message && String(err.message).includes("503")) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "⚠️ Gemini no está disponible (503) y usted ya sabe que paila mi rey! Prueba mas ratico o use `Área/ tarea` o `+` para tarea rápida, ya se la sabe! hagale!"
+                "⚠️ Gemini no está disponible (503) y usted ya sabe que paila mi rey! Prueba mas ratico o use `Área/ tarea` o `+` para tarea rápida, ya se la sabe! hagale!",
+                null,
+                null
             );
         } else {
-            await telegramSendMessage(token, chatId, `⚠️ Error mijo, vealo bien y revise o me motorea y paila! ${err.message}`);
+            await telegramSendMessage(
+                token,
+                chatId,
+                `⚠️ Error mijo, vealo bien y revise o me motorea y paila! ${err.message}`,
+                null,
+                null
+            );
         }
     }
 
