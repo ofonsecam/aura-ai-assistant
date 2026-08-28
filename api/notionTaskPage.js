@@ -213,12 +213,16 @@ function getBogotaCurrentWeekMondaySundayYmd() {
 }
 
 /**
- * Lunes de la semana siguiente (Bogotá). En domingo por la noche apunta al día siguiente.
+ * Próximo domingo (Bogotá). Si hoy es domingo, devuelve el domingo de la semana siguiente.
  * @returns {string} YYYY-MM-DD
  */
-function getNextMondayBogotaYmd() {
-    const { weekStart } = getBogotaCurrentWeekMondaySundayYmd();
-    return addCalendarDaysYmd(weekStart, 7);
+function getNextSundayBogotaYmd() {
+    const todayYmd = getTodayBogotaYmd();
+    const [y, m, d] = todayYmd.split("-").map(Number);
+    const ref = new Date(Date.UTC(y, m - 1, d, 17, 0, 0));
+    const dow = ref.getUTCDay();
+    const daysUntilSunday = dow === 0 ? 7 : 7 - dow;
+    return addCalendarDaysYmd(todayYmd, daysUntilSunday);
 }
 
 /**
@@ -1923,7 +1927,7 @@ module.exports = {
     getWeeklyCronReportData,
     getCompletedTasksCountLast7DaysBogota,
     getCompletedTasksTodayBogota,
-    getNextMondayBogotaYmd,
+    getNextSundayBogotaYmd,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
     getPendingHabitsForToday,

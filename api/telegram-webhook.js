@@ -20,6 +20,7 @@ const {
     markHabitCheckboxDone,
     parseTaskText,
     taskDateToBogotaYmd,
+    getNextSundayBogotaYmd,
 } = require("./notionTaskPage");
 const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
 const {
@@ -61,7 +62,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.2
+📖 Manual de Aura AI v2.9.3.2.2
 
 🛠 Gestión de Tareas
 
@@ -105,6 +106,7 @@ const CLEANING_PLAN_DATABASE_ID = (process.env.DB_CLEANING_PLAN || "").trim();
 const ASEO_READY_PROP = "Listo para tareas";
 const ASEO_PROCESSED_PROP = "Procesada por Aura";
 const ASEO_TASKS_ANCHOR_HEADING = "Tareas de aseo de la semana:";
+const ASEO_REVIEW_TASK_NAME = "Revisar y ajustar plan de aseo de la semana";
 
 const TELEGRAM_BOT_COMMANDS = [
     { command: "help", description: "Manual de comandos de Aura" },
@@ -476,6 +478,14 @@ async function handleSyncAseoCommand(token, chatId) {
                     Fecha: fechaYmd,
                 });
                 if (createResult?.ok) createdCount += 1;
+            }
+            const reviewResult = await createNotionTaskPage({
+                Name: ASEO_REVIEW_TASK_NAME,
+                Area: "Aseo",
+                Fecha: getNextSundayBogotaYmd(),
+            });
+            if (!reviewResult?.ok) {
+                console.warn("[syncaseo] no se pudo crear tarea de revisión:", reviewResult?.error);
             }
             await markAseoPlanAsProcessed(pageId);
             await telegramSendMessage(

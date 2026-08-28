@@ -6,7 +6,6 @@
     { "path": "/api/cron-summary", "schedule": "30 21 * * *" },
     { "path": "/api/cron-daily-close", "schedule": "30 0 * * *" },
     { "path": "/api/cron-weekly", "schedule": "0 0 * * 1" },
-    { "path": "/api/cron-aseo-reminder", "schedule": "0 1 * * 1" },
     { "path": "/api/cron-habitos", "schedule": "15 12 * * *" },
     { "path": "/api/cron-habitos", "schedule": "0 18 * * *" },
     { "path": "/api/cron-habitos", "schedule": "40 23 * * *" }
