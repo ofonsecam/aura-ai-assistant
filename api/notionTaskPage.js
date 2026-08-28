@@ -496,6 +496,10 @@ function resolveNaturalDate(input) {
         now.setDate(now.getDate() + 1);
         return now.toISOString().slice(0, 10);
     }
+    if (/^tmw$/i.test(raw)) {
+        now.setDate(now.getDate() + 1);
+        return now.toISOString().slice(0, 10);
+    }
     const parsed = parseTaskText(raw);
     if (parsed.taskDate) {
         return taskDateToBogotaYmd(parsed.taskDate);
@@ -524,12 +528,13 @@ function normalizeNotionArea(area) {
  * Canonicaliza texto para entidades temporales:
  * - lower-case
  * - variantes de "mañana/manana" -> token "__tomorrow__"
+ * - "tmw" -> token "__tomorrow__"
  * @param {string} text
  * @returns {string}
  */
 function normalizeDateEntitiesText(text) {
     const raw = String(text ?? '').toLowerCase();
-    return raw.replace(/\bma(?:ñ|n)ana\b/g, '__tomorrow__');
+    return raw.replace(/\bma(?:ñ|n)ana\b/g, '__tomorrow__').replace(/\btmw\b/g, '__tomorrow__');
 }
 
 /**
@@ -666,7 +671,7 @@ function parseTaskText(text) {
     if (normalizedEntities.includes('__tomorrow__')) {
         const tomorrowYmd = addCalendarDaysYmd(getTodayBogotaYmd(), 1);
         const taskDate = new Date(`${tomorrowYmd}T12:00:00-05:00`);
-        let cleanTitle = trimmed.replace(/\bma(?:ñ|n)ana\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        let cleanTitle = trimmed.replace(/\bma(?:ñ|n)ana\b/gi, ' ').replace(/\btmw\b/gi, ' ').replace(/\s+/g, ' ').trim();
         cleanTitle = stripEdgeDateConnectors(cleanTitle);
         return { cleanTitle, taskDate };
     }

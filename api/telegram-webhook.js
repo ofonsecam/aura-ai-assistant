@@ -62,7 +62,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.2.2
+📖 Manual de Aura AI v2.9.3.2.3
 
 🛠 Gestión de Tareas
 
@@ -193,6 +193,11 @@ function parseSyncMinutaDateToken(dateToken) {
     const raw = String(dateToken || "").trim();
     if (!raw) return "";
     if (/^mañana$|^manana$/i.test(raw)) {
+        const refDate = parseBogotaReferenceMmDdYyToDate();
+        refDate.setUTCDate(refDate.getUTCDate() + 1);
+        return taskDateToBogotaYmd(refDate);
+    }
+    if (/^tmw$/i.test(raw)) {
         const refDate = parseBogotaReferenceMmDdYyToDate();
         refDate.setUTCDate(refDate.getUTCDate() + 1);
         return taskDateToBogotaYmd(refDate);
