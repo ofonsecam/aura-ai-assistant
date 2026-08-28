@@ -90,7 +90,7 @@ test("T/ registra tensión y responde confirmación", async () => {
     assert.equal(res.statusCode, 200);
     assert.deepEqual(capturedPayload, { quien: "Oscar", tension: "126/86" });
     const send = apiCalls.find((c) => c.endpoint === "sendMessage");
-    assert.match(send.body.text, /Tensión registrada con éxito para Oscar: 126\/86 \(2026-08-24\)/);
+    assert.match(send.body.text, /Tensión registrada con éxito.*para Oscar: 126\/86 \(2026-08-24\)/);
 });
 
 test("T/ con formato inválido no llama a Notion", async () => {

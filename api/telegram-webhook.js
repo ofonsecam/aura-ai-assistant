@@ -61,7 +61,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3
+📖 Manual de Aura AI v2.9.3.2
 
 🛠 Gestión de Tareas
 
@@ -74,6 +74,10 @@ __________________________________________________________________
 ⛪️ Tareas pendientes de reuniones 
 
 /syncminutas - Sincroniza tareas pendientes de las reuniones grabadas.
+
+🧹 Plan semanal de aseo
+
+/syncaseo - Sincroniza las tareas del plan semanal de aseo.
 
 📝 Notas y Hábitos
 
@@ -96,6 +100,22 @@ const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
 const MINUTAS_READY_PROP = "Listo para tareas";
 const MINUTAS_PROCESSED_PROP = "Procesada por Aura";
 const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
+
+const CLEANING_PLAN_DATABASE_ID = (process.env.DB_CLEANING_PLAN || "").trim();
+const ASEO_READY_PROP = "Listo para tareas";
+const ASEO_PROCESSED_PROP = "Procesada por Aura";
+const ASEO_TASKS_ANCHOR_HEADING = "Tareas de aseo de la semana:";
+
+const TELEGRAM_BOT_COMMANDS = [
+    { command: "help", description: "Manual de comandos de Aura" },
+    { command: "start", description: "Iniciar el bot" },
+    { command: "ld", description: "Ver tareas de hoy" },
+    { command: "lm", description: "Ver tareas de mañana" },
+    { command: "lv", description: "Ver tareas vencidas" },
+    { command: "h", description: "Hábitos pendientes de hoy" },
+    { command: "syncminutas", description: "Sincronizar tareas desde minutas de reuniones" },
+    { command: "syncaseo", description: "Sincroniza las tareas del plan semanal de aseo" },
+];
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
 const interactiveTaskActionContext = new Map();
@@ -290,20 +310,104 @@ function extractTodoTextsAfterAnchorH3(blocks) {
 }
 
 async function markMinutaAsProcessed(pageId) {
+    await markNotionPageCheckbox(pageId, MINUTAS_PROCESSED_PROP, true);
+}
+
+async function markNotionPageCheckbox(pageId, propName, value) {
     const headers = notionHeadersOrThrow();
     const res = await fetch(`https://api.notion.com/v1/pages/${encodeURIComponent(pageId)}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({
             properties: {
-                [MINUTAS_PROCESSED_PROP]: { checkbox: true },
+                [propName]: { checkbox: Boolean(value) },
             },
         }),
     });
     const data = await res.json();
     if (!res.ok) {
         const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
-        throw new Error(`No se pudo marcar la minuta como procesada (${detail}).`);
+        throw new Error(`No se pudo actualizar la propiedad "${propName}" (${detail}).`);
+    }
+}
+
+async function notionQueryReadyPagesByCheckboxes(databaseId, readyProp, processedProp, entityLabel) {
+    if (!databaseId) {
+        throw new Error(`Falta DB_CLEANING_PLAN en el entorno (Vercel → Variables).`);
+    }
+    const headers = notionHeadersOrThrow();
+    const out = [];
+    let nextCursor = null;
+    do {
+        const body = {
+            page_size: 100,
+            filter: {
+                and: [
+                    { property: readyProp, checkbox: { equals: true } },
+                    { property: processedProp, checkbox: { equals: false } },
+                ],
+            },
+        };
+        if (nextCursor) body.start_cursor = nextCursor;
+        const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
+            throw new Error(`Error consultando ${entityLabel} (${detail}).`);
+        }
+        out.push(...(Array.isArray(data.results) ? data.results : []));
+        nextCursor = data.has_more ? data.next_cursor : null;
+    } while (nextCursor);
+    return out;
+}
+
+function extractTodoTextsAfterAnchorHeading(blocks, anchorText) {
+    const todos = [];
+    let collecting = false;
+    const anchorHeadingTypes = ["heading_2", "heading_3"];
+    for (const block of blocks) {
+        const type = block?.type;
+        if (anchorHeadingTypes.includes(type)) {
+            const headingText = richTextToPlain(block?.[type]?.rich_text);
+            if (!collecting && headingText === anchorText) {
+                collecting = true;
+                continue;
+            }
+            if (collecting) break;
+        }
+        if (collecting && type === "heading_1") {
+            break;
+        }
+        if (collecting && type === "to_do") {
+            const todoText = richTextToPlain(block?.to_do?.rich_text);
+            if (todoText) todos.push(todoText);
+        }
+    }
+    return todos;
+}
+
+async function markAseoPlanAsProcessed(pageId) {
+    await markNotionPageCheckbox(pageId, ASEO_PROCESSED_PROP, true);
+}
+
+async function registerTelegramBotCommands(token) {
+    if (!token) return;
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands: TELEGRAM_BOT_COMMANDS }),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            console.error("[bot] setMyCommands failed", data);
+        }
+    } catch (err) {
+        console.error("[bot] setMyCommands exception", err);
     }
 }
 
@@ -335,6 +439,62 @@ async function handleSyncMinutasCommand(token, chatId) {
             token,
             chatId,
             `✅ Listo my little associated! Sincronización completa: Se agregaron ${createdCount} tareas de la reunión '${minutaTitle}' Yo vere a revisar y hacer todo D1`
+        );
+    }
+}
+
+async function handleSyncAseoCommand(token, chatId) {
+    try {
+        const aseoPages = await notionQueryReadyPagesByCheckboxes(
+            CLEANING_PLAN_DATABASE_ID,
+            ASEO_READY_PROP,
+            ASEO_PROCESSED_PROP,
+            "planes de aseo"
+        );
+        if (!aseoPages.length) {
+            await telegramSendMessage(
+                token,
+                chatId,
+                "ℹ️ No encontré planes de aseo listos para sincronizar. Revise y me charla mi rey!",
+                null,
+                null
+            );
+            return;
+        }
+        for (const page of aseoPages) {
+            const pageId = String(page?.id || "").trim();
+            if (!pageId) continue;
+            const blocks = await notionListAllBlockChildren(pageId);
+            const todoTexts = extractTodoTextsAfterAnchorHeading(blocks, ASEO_TASKS_ANCHOR_HEADING);
+            let createdCount = 0;
+            for (const todoText of todoTexts) {
+                const { cleanTitle, fechaYmd } = parseSyncMinutaTodoText(todoText);
+                if (!cleanTitle) continue;
+                const createResult = await createNotionTaskPage({
+                    Name: cleanTitle,
+                    Area: "Aseo",
+                    Fecha: fechaYmd,
+                });
+                if (createResult?.ok) createdCount += 1;
+            }
+            await markAseoPlanAsProcessed(pageId);
+            await telegramSendMessage(
+                token,
+                chatId,
+                `✅ ¡Plan de aseo sincronizado My so!! Se agregaron ${createdCount} tareas de aseo para esta semana. A darle con toda 🧹 y no las aplace!`,
+                null,
+                null
+            );
+        }
+    } catch (err) {
+        console.error("[syncaseo] error", err);
+        const safeMsg = String(err?.message || err).replace(/[*_`[\]]/g, "·");
+        await telegramSendMessage(
+            token,
+            chatId,
+            `⚠️ No pude sincronizar el plan de aseo: ${safeMsg} Revise y me charla mi rey!`,
+            null,
+            null
         );
     }
 }
@@ -1395,6 +1555,7 @@ module.exports = async function handler(req, res) {
         }
 
         if (isTelegramSlashCommand(text, "start")) {
+            await registerTelegramBotCommands(token);
             await telegramSendMessage(
                 token,
                 chatId,
@@ -1441,6 +1602,10 @@ module.exports = async function handler(req, res) {
             }
             if (isTelegramSlashCommand(text, "syncminutas")) {
                 await handleSyncMinutasCommand(token, chatId);
+                return res.status(200).send("OK");
+            }
+            if (isTelegramSlashCommand(text, "syncaseo")) {
+                await handleSyncAseoCommand(token, chatId);
                 return res.status(200).send("OK");
             }
             await telegramSendMessage(token, chatId, "❓ Comando no reconocido mijo. Pille echele gafa y use /help");

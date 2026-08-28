@@ -26,6 +26,7 @@ const TASK_ALLOWED_AREAS = [
     'Universidad',
     'Personales',
     'Matrimonio',
+    'Aseo',
 ];
 
 const notionInboxId = (process.env.NOTION_INBOX_ID || '').trim();
@@ -209,6 +210,15 @@ function getBogotaCurrentWeekMondaySundayYmd() {
         return `${yy}-${mm}-${dd}`;
     };
     return { weekStart: toYmd(mondayMs), weekEnd: toYmd(sundayMs) };
+}
+
+/**
+ * Lunes de la semana siguiente (Bogotá). En domingo por la noche apunta al día siguiente.
+ * @returns {string} YYYY-MM-DD
+ */
+function getNextMondayBogotaYmd() {
+    const { weekStart } = getBogotaCurrentWeekMondaySundayYmd();
+    return addCalendarDaysYmd(weekStart, 7);
 }
 
 /**
@@ -1913,6 +1923,7 @@ module.exports = {
     getWeeklyCronReportData,
     getCompletedTasksCountLast7DaysBogota,
     getCompletedTasksTodayBogota,
+    getNextMondayBogotaYmd,
     ensureDailyHabitPage,
     getHabitsDatabaseNotionUrl,
     getPendingHabitsForToday,
