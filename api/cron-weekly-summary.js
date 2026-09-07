@@ -16,7 +16,7 @@ function verifyCronAuthorization(req) {
     return { ok: true };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
     const auth = verifyCronAuthorization(req);
     if (!auth.ok) {
         return res.status(auth.status).json({ error: auth.error });
@@ -49,3 +49,5 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: error.message });
     }
 }
+
+module.exports = handler;

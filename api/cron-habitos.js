@@ -6,7 +6,7 @@
 const { getPendingHabitsForToday } = require("./notionTaskPage");
 const { buildHabitsPendingMessage, buildHabitsPendingKeyboard } = require("./habitTelegramMenu");
 
-export default async function handler(req, res) {
+async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
@@ -48,3 +48,5 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: error.message });
     }
 }
+
+module.exports = handler;
