@@ -3,6 +3,7 @@
  * Vercel cron: 30 1 * * * UTC (= 20:30 Bogotá).
  */
 const { getCompletedTasksTodayBogota, getTomorrowTasks, getWeeklyTasks } = require("./notionTaskPage");
+const { getCategoryEmoji } = require("./categoryPriority");
 
 function safeTelegramMdLine(s) {
     return String(s).replace(/[*_`[\]]/g, "·");
@@ -21,10 +22,10 @@ function formatCompletedTodayList(tasks) {
 function formatPendingTasksList(tasks) {
     if (!tasks.length) return "_Sin pendientes._";
     return tasks
-        .map(
-            (t, i) =>
-                `${i + 1}. 📌 [${safeTelegramMdLine(t.area)}] — ${safeTelegramMdLine(t.name)} (${safeTelegramMdLine(t.status)})`
-        )
+        .map((t, i) => {
+            const emoji = getCategoryEmoji(t.area);
+            return `${i + 1}. ${emoji} [${safeTelegramMdLine(t.area)}] — ${safeTelegramMdLine(t.name)} (${safeTelegramMdLine(t.status)})`;
+        })
         .join("\n");
 }
 

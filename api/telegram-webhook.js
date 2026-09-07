@@ -22,6 +22,10 @@ const {
     taskDateToBogotaYmd,
     getNextSundayBogotaYmd,
 } = require("./notionTaskPage");
+const {
+    getCategoryEmoji,
+    sortTasksByCategoryPriority,
+} = require("./categoryPriority");
 const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
 const {
     HABIT_CALLBACK_PREFIX,
@@ -62,7 +66,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.2.3
+📖 Manual de Aura AI v2.9.3.3
 
 🛠 Gestión de Tareas
 
@@ -679,7 +683,7 @@ async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", sh
 
 /** Tareas por página en el teclado/lista; más de esto activa fila de paginación. */
 const TASKS_PAGE_SIZE = 8;
-const COMMAND_TASKS_PAGE_SIZE = 6;
+const COMMAND_TASKS_PAGE_SIZE = 7;
 const TASK_STATUS_ACTIVE = ["Pendiente", "Haciendo", "Pausado"];
 const LIST_COMMAND_KEYS = new Set(["ld", "lm", "lv"]);
 
@@ -794,7 +798,8 @@ async function queryTasksForListCommand(commandKey) {
         tasks.push(...pages.map(extractNotionTaskFromPage));
         nextCursor = data.has_more ? data.next_cursor : null;
     } while (nextCursor);
-    return tasks;
+    // Tras orden estable de Notion (Fecha + created_time), reordenar por prioridad de categoría.
+    return sortTasksByCategoryPriority(tasks);
 }
 
 function formatTaskDateLabel(fechaYmd) {
@@ -817,12 +822,26 @@ function escapeTelegramMarkdown(text) {
         .replace(/`/g, "\\`");
 }
 
-function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
+/**
+ * @param {Array<{ name?: string, area?: string, fechaYmd?: string }>} tasks
+ * @param {number} pageZeroBased
+ * @param {number} [pageSize]
+ * @param {{ commandKey?: string, dateLabel?: string }} [opts]
+ */
+function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE, opts = {}) {
     const allTasks = Array.isArray(tasks) ? tasks : [];
-    const totalPages = Math.max(1, Math.ceil(allTasks.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(allTasks.length / pageSize) || 1);
     const { page: safePage } = clampTaskListPage(pageZeroBased, allTasks.length, pageSize);
     const pageHuman = safePage + 1;
-    const header = `📄 Página ${pageHuman} de ${totalPages}\n\n`;
+    const commandKey = String(opts.commandKey || "").trim();
+    const showDateInHeader = commandKey === "ld" || commandKey === "lm";
+    const showDateUnderTask = commandKey === "lv";
+    const dateLabel = String(opts.dateLabel || "").trim();
+    let header = `📄 Página ${pageHuman} de ${totalPages}`;
+    if (showDateInHeader && dateLabel) {
+        header += ` — ${dateLabel}`;
+    }
+    header += "\n\n";
     if (!allTasks.length) {
         return { text: `${header}🔍 Sin pendientes. Asi que rela mi rey!`, page: safePage, totalPages };
     }
@@ -830,11 +849,14 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
     const visible = allTasks.slice(start, start + pageSize);
     const body = visible
         .map((task, idx) => {
-            const absoluteIndex = start + idx + 1;
+            const localIndex = idx + 1;
             const area = escapeTelegramMarkdown(task.area || "Sin Área");
             const taskName = escapeTelegramMarkdown(task.name || "Sin título");
-            const dateLabel = formatTaskDateLabel(task.fechaYmd);
-            return `${absoluteIndex}. 🔹 **[${area}]** - ${taskName}\n📅 *${dateLabel}*`;
+            const emoji = getCategoryEmoji(task.area);
+            const line = `${localIndex}. ${emoji} ${area} - ${taskName}`;
+            if (!showDateUnderTask) return line;
+            const taskDateLabel = formatTaskDateLabel(task.fechaYmd);
+            return `${line}\n📅 *${taskDateLabel}*`;
         })
         .join("\n\n");
     return { text: `${header}${body}`, page: safePage, totalPages };
@@ -850,9 +872,8 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
     const rowTwo = [];
     for (let i = 0; i < visible.length; i += 1) {
         const localIndex = i + 1;
-        const globalTaskLabel = (pageHuman - 1) * pageSize + localIndex;
         const btn = {
-            text: String(globalTaskLabel),
+            text: String(localIndex),
             callback_data: `pick_${localIndex}_${commandKey}_p${pageHuman}`,
         };
         if (localIndex <= 3) rowOne.push(btn);
@@ -874,7 +895,13 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
 
 async function renderListCommandPage(token, chatId, commandKey, pageZeroBased, opts = {}) {
     const items = await queryItemsForPaginatedList(commandKey);
-    const { text, page } = buildListCommandMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE);
+    let dateLabel = "";
+    if (commandKey === "ld") dateLabel = formatTaskDateLabel(getBogotaTodayYmd());
+    else if (commandKey === "lm") dateLabel = formatTaskDateLabel(getBogotaTomorrowYmd());
+    const { text, page } = buildListCommandMessage(items, pageZeroBased, COMMAND_TASKS_PAGE_SIZE, {
+        commandKey,
+        dateLabel,
+    });
     const keyboard = buildListCommandKeyboard(items, commandKey, page, COMMAND_TASKS_PAGE_SIZE);
     if (opts.editMessageId != null) {
         await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
@@ -1314,7 +1341,7 @@ module.exports = async function handler(req, res) {
             const actionMsg = await telegramSendMessageAndGetResult(
                 token,
                 chatId,
-                `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
+                `🎯 ${buttonIndex}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
                 actionKeyboard
             );
             interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
@@ -1760,3 +1787,9 @@ module.exports = async function handler(req, res) {
 
     return res.status(200).send("OK");
 };
+
+module.exports.buildListCommandMessage = buildListCommandMessage;
+module.exports.buildListCommandKeyboard = buildListCommandKeyboard;
+module.exports.COMMAND_TASKS_PAGE_SIZE = COMMAND_TASKS_PAGE_SIZE;
+module.exports.clampTaskListPage = clampTaskListPage;
+module.exports.helpMessage = helpMessage;

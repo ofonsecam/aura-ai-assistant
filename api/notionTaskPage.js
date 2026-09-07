@@ -1,3 +1,12 @@
+const {
+    getCategoryEmoji,
+    getCategoryPriority,
+    sortTasksByCategoryPriority,
+    CATEGORY_PRIORITY_CONFIG,
+    DEFAULT_CATEGORY_PRIORITY,
+    DEFAULT_CATEGORY_EMOJI,
+} = require('./categoryPriority');
+
 const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 /** Etiqueta humana para logs/Telegram (opcional: NOTION_TASKS_DATABASE_NAME en Vercel). */
 const TASKS_DATABASE_DISPLAY_NAME = (process.env.NOTION_TASKS_DATABASE_NAME || 'Base de tareas').trim();
@@ -326,9 +335,10 @@ async function getCompletedTasksTodayBogota() {
 /**
  * Consulta paginada de la base de tareas.
  * @param {Record<string, unknown>} [filter]
+ * @param {Array<Record<string, unknown>>} [sorts]
  * @returns {Promise<object[]>}
  */
-async function queryTaskDatabaseAll(filter) {
+async function queryTaskDatabaseAll(filter, sorts) {
     if (!databaseId || !NOTION_UUID_RE.test(databaseId)) {
         throw new Error("NOTION_DATABASE_ID inválido o ausente.");
     }
@@ -340,6 +350,7 @@ async function queryTaskDatabaseAll(filter) {
     for (;;) {
         const body = { page_size: 100 };
         if (filter) body.filter = filter;
+        if (Array.isArray(sorts) && sorts.length) body.sorts = sorts;
         if (start_cursor) body.start_cursor = start_cursor;
         const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
             method: "POST",
@@ -357,6 +368,12 @@ async function queryTaskDatabaseAll(filter) {
     }
     return all;
 }
+
+/** Orden estable previo al reorden por prioridad de categoría. */
+const TASK_QUERY_STABLE_SORTS = [
+    { property: PROP_TASK_FECHA, direction: 'ascending' },
+    { timestamp: 'created_time', direction: 'ascending' },
+];
 
 /**
  * Datos para el cron semanal (cierre de semana en America/Bogota).
@@ -1010,17 +1027,16 @@ async function readNotionTasks(filterArea, filterDate) {
 
     if (!resultsFiltered.length) return { text: '🔍 Sin pendientes.', tasks: [] };
 
-    const tasks = resultsFiltered.map((p) => ({
-        id: p.id,
-        name: p.properties[PROP_TASK_NAME]?.title[0]?.text?.content || 'Sin título',
-        status: p.properties[PROP_TASK_ESTADO]?.select?.name || '---',
-        area: p.properties[PROP_TASK_AREA]?.select?.name || '---'
-    }));
+    const tasks = sortTasksByCategoryPriority(
+        resultsFiltered.map((p) => ({
+            id: p.id,
+            name: p.properties[PROP_TASK_NAME]?.title[0]?.text?.content || 'Sin título',
+            status: p.properties[PROP_TASK_ESTADO]?.select?.name || '---',
+            area: p.properties[PROP_TASK_AREA]?.select?.name || '---'
+        }))
+    );
 
-    const text =
-        '📋 Tus tareas:\n' +
-        tasks.map((t, i) => `${i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`).join('\n');
-    return { text, tasks };
+    return { text: formatSummaryTasksText(tasks), tasks };
 }
 
 /**
@@ -1038,13 +1054,22 @@ function mapTaskPageToSummaryTask(p) {
 }
 
 /**
- * Formatea la lista de tareas para Telegram.
+ * Formatea la lista de tareas para Telegram (orden por prioridad de categoría + rombo).
  * @param {{ id: string, name: string, status: string, area: string }[]} tasks
  * @returns {string}
  */
 function formatSummaryTasksText(tasks) {
-    if (!tasks.length) return '🔍 Sin pendientes.';
-    return '📋 Tus tareas:\n' + tasks.map((t, i) => `${i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`).join('\n');
+    const ordered = sortTasksByCategoryPriority(Array.isArray(tasks) ? tasks : []);
+    if (!ordered.length) return '🔍 Sin pendientes.';
+    return (
+        '📋 Tus tareas:\n' +
+        ordered
+            .map((t, i) => {
+                const emoji = getCategoryEmoji(t.area);
+                return `${i + 1}. ${emoji} [${t.area}] — ${t.name} (${t.status})`;
+            })
+            .join('\n')
+    );
 }
 
 /**
@@ -1065,8 +1090,8 @@ async function getDailyTasks() {
             },
             { property: PROP_TASK_FECHA, date: { equals: dateYmd } }
         ]
-    });
-    const tasks = pages.map(mapTaskPageToSummaryTask);
+    }, TASK_QUERY_STABLE_SORTS);
+    const tasks = sortTasksByCategoryPriority(pages.map(mapTaskPageToSummaryTask));
     return { text: formatSummaryTasksText(tasks), tasks, dateYmd };
 }
 
@@ -1088,8 +1113,8 @@ async function getTomorrowTasks() {
             },
             { property: PROP_TASK_FECHA, date: { equals: dateYmd } }
         ]
-    });
-    const tasks = pages.map(mapTaskPageToSummaryTask);
+    }, TASK_QUERY_STABLE_SORTS);
+    const tasks = sortTasksByCategoryPriority(pages.map(mapTaskPageToSummaryTask));
     return { text: formatSummaryTasksText(tasks), tasks, dateYmd };
 }
 
@@ -1112,8 +1137,8 @@ async function getWeeklyTasks() {
             { property: PROP_TASK_FECHA, date: { on_or_after: weekStart } },
             { property: PROP_TASK_FECHA, date: { on_or_before: weekEnd } }
         ]
-    });
-    const tasks = pages.map(mapTaskPageToSummaryTask);
+    }, TASK_QUERY_STABLE_SORTS);
+    const tasks = sortTasksByCategoryPriority(pages.map(mapTaskPageToSummaryTask));
     return { text: formatSummaryTasksText(tasks), tasks, weekStart, weekEnd };
 }
 
@@ -1136,8 +1161,8 @@ async function getMonthTasks() {
             { property: PROP_TASK_FECHA, date: { on_or_after: monthStart } },
             { property: PROP_TASK_FECHA, date: { on_or_before: monthEnd } }
         ]
-    });
-    const tasks = pages.map(mapTaskPageToSummaryTask);
+    }, TASK_QUERY_STABLE_SORTS);
+    const tasks = sortTasksByCategoryPriority(pages.map(mapTaskPageToSummaryTask));
     return { text: formatSummaryTasksText(tasks), tasks, monthStart, monthEnd };
 }
 
@@ -1222,11 +1247,18 @@ async function getOverdueTasks() {
                     },
                     { property: PROP_TASK_FECHA, date: { before: todayStr } }
                 ]
-            }
+            },
+            sorts: TASK_QUERY_STABLE_SORTS,
         })
     });
     const data = await res.json();
-    return data.results || [];
+    const pages = data.results || [];
+    return sortTasksByCategoryPriority(
+        pages.map((p) => ({
+            ...p,
+            area: p.properties?.[PROP_TASK_AREA]?.select?.name || '---',
+        }))
+    );
 }
 
 /**
@@ -1941,4 +1973,11 @@ module.exports = {
     queryNotionPlanProjects,
     updateNotionProyectoEstado,
     PLAN_STATUS_COMPLETED,
+    formatSummaryTasksText,
+    sortTasksByCategoryPriority,
+    getCategoryEmoji,
+    getCategoryPriority,
+    CATEGORY_PRIORITY_CONFIG,
+    DEFAULT_CATEGORY_PRIORITY,
+    DEFAULT_CATEGORY_EMOJI,
 };
