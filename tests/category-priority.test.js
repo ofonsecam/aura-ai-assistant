@@ -83,6 +83,7 @@ test("COMMAND_TASKS_PAGE_SIZE es 7 y pagina de a 7", () => {
     });
     assert.equal(page0.totalPages, 3);
     assert.match(page0.text, /^📄 Página 1 de 3 — 7 de septiembre/);
+    assert.match(page0.text, /1\. 🟣 Yu - Tarea 1/);
     assert.match(page0.text, /7\. 🟣 Yu - Tarea 7/);
     assert.doesNotMatch(page0.text, /Tarea 8/);
     assert.doesNotMatch(page0.text, /📅/);
@@ -93,6 +94,34 @@ test("COMMAND_TASKS_PAGE_SIZE es 7 y pagina de a 7", () => {
         .flat()
         .map((b) => b.text);
     assert.deepEqual(numberButtons, ["1", "2", "3", "4", "5", "6", "7"]);
+    assert.equal(keyboard.inline_keyboard[0][0].callback_data, "pick_1_ld_p1");
+});
+
+test("página 2 usa numeración global correlativa en texto y botones", () => {
+    const tasks = Array.from({ length: 13 }, (_, i) => ({
+        name: `Tarea ${i + 1}`,
+        area: "Yu",
+        fechaYmd: "2026-09-07",
+    }));
+    const page1 = webhook.buildListCommandMessage(tasks, 1, webhook.COMMAND_TASKS_PAGE_SIZE, {
+        commandKey: "ld",
+        dateLabel: "7 de septiembre",
+    });
+    assert.equal(page1.totalPages, 2);
+    assert.match(page1.text, /^📄 Página 2 de 2 — 7 de septiembre/);
+    assert.match(page1.text, /8\. 🟣 Yu - Tarea 8/);
+    assert.match(page1.text, /13\. 🟣 Yu - Tarea 13/);
+    assert.doesNotMatch(page1.text, /^1\. /m);
+    assert.doesNotMatch(page1.text, /Tarea 7/);
+
+    const keyboard = webhook.buildListCommandKeyboard(tasks, "ld", 1, webhook.COMMAND_TASKS_PAGE_SIZE);
+    const numberButtons = keyboard.inline_keyboard
+        .slice(0, 2)
+        .flat()
+        .map((b) => b.text);
+    assert.deepEqual(numberButtons, ["8", "9", "10", "11", "12", "13"]);
+    assert.equal(keyboard.inline_keyboard[0][0].callback_data, "pick_1_ld_p2");
+    assert.equal(keyboard.inline_keyboard[1][2].callback_data, "pick_6_ld_p2");
 });
 
 test("/lm omite fecha bajo tarea; /lv la conserva", () => {

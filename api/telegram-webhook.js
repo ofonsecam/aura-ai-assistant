@@ -66,7 +66,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3.1
+📖 Manual de Aura AI v2.9.3.3.2
 
 🛠 Gestión de Tareas
 
@@ -849,11 +849,11 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
     const visible = allTasks.slice(start, start + pageSize);
     const body = visible
         .map((task, idx) => {
-            const localIndex = idx + 1;
+            const globalIndex = start + idx + 1;
             const area = escapeTelegramMarkdown(task.area || "Sin Área");
             const taskName = escapeTelegramMarkdown(task.name || "Sin título");
             const emoji = getCategoryEmoji(task.area);
-            const line = `${localIndex}. ${emoji} ${area} - ${taskName}`;
+            const line = `${globalIndex}. ${emoji} ${area} - ${taskName}`;
             if (!showDateUnderTask) return line;
             const taskDateLabel = formatTaskDateLabel(task.fechaYmd);
             return `${line}\n📅 *${taskDateLabel}*`;
@@ -872,8 +872,10 @@ function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = C
     const rowTwo = [];
     for (let i = 0; i < visible.length; i += 1) {
         const localIndex = i + 1;
+        const globalIndex = start + localIndex;
         const btn = {
-            text: String(localIndex),
+            text: String(globalIndex),
+            // callback usa índice local (1…N de la página); el handler lo convierte a índice global.
             callback_data: `pick_${localIndex}_${commandKey}_p${pageHuman}`,
         };
         if (localIndex <= 3) rowOne.push(btn);
@@ -1341,7 +1343,7 @@ module.exports = async function handler(req, res) {
             const actionMsg = await telegramSendMessageAndGetResult(
                 token,
                 chatId,
-                `🎯 ${buttonIndex}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
+                `🎯 ${itemIndex + 1}. ${escapeTelegramMarkdown(selectedItem.name)}\n¿Qué acción quieres ejecutar? Hablame claro mi rey!`,
                 actionKeyboard
             );
             interactiveTaskActionContext.set(`${chatId}:${actionMsg.message_id}`, {
