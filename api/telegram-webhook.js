@@ -66,7 +66,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3
+📖 Manual de Aura AI v2.9.3.3.1
 
 🛠 Gestión de Tareas
 

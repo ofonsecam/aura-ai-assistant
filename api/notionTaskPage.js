@@ -5,7 +5,7 @@ const {
     CATEGORY_PRIORITY_CONFIG,
     DEFAULT_CATEGORY_PRIORITY,
     DEFAULT_CATEGORY_EMOJI,
-} = require('./categoryPriority');
+} = require("./categoryPriority");
 
 const databaseId = (process.env.NOTION_DATABASE_ID || '').trim();
 /** Etiqueta humana para logs/Telegram (opcional: NOTION_TASKS_DATABASE_NAME en Vercel). */
