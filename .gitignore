@@ -1,2 +1,10 @@
 node_modules
 .env
+.env.*
+!.env.example
+.vercel
+.cursor
+coverage
+*.log
+tmp
+temp

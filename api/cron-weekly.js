@@ -2,7 +2,7 @@
  * Resumen semanal (Vercel: `0 1 * * 1` UTC = domingo 20:00 Bogotá).
  * Encabezado de logros (últimos 7 días, Estado Hecho) + reporte detallado semanal.
  */
-const { getWeeklyCronReportData, getCompletedTasksCountLast7DaysBogota } = require("./notionTaskPage");
+const { getWeeklyCronReportData, getCompletedTasksCountLast7DaysBogota } = require("../lib/notionTaskPage");
 
 /** Evita romper Markdown de Telegram en nombres de tarea. */
 function safeTelegramMdLine(s) {

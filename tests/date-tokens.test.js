@@ -5,7 +5,7 @@ const {
     parseTaskText,
     taskDateToBogotaYmd,
     rescheduleTaskDateByPageId,
-} = require("../api/notionTaskPage");
+} = require("../lib/notionTaskPage");
 
 function expectedTomorrowBogotaYmd() {
     const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));

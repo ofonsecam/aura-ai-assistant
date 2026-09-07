@@ -1,0 +1,43 @@
+# Dependencias y secretos (nunca al bundle)
+node_modules
+.env
+.env.*
+!.env.example
+
+# Control de versiones / IDE
+.git
+.github
+.cursor
+.vscode
+.idea
+
+# Tests y tooling local
+tests
+coverage
+*.test.js
+*.spec.js
+
+# Documentación y estáticos no usados por serverless
+README.md
+*.md
+docs
+app.html
+siteplan.html
+styles
+scripts
+public
+assets
+images
+**/*.{png,jpg,jpeg,gif,webp,svg,ico,mp4,mp3,wav}
+
+# Artefactos locales de Vercel / build
+.vercel
+.output
+dist
+build
+tmp
+temp
+*.log
+
+# Scripts locales de mantenimiento (no son handlers)
+**/fix-*.js

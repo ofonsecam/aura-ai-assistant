@@ -3,8 +3,8 @@
  * Horarios COL (UTC-5): 07:15, 13:00 y 18:40 → ver vercel.json.
  * Silencio total si no hay hábitos pendientes.
  */
-const { getPendingHabitsForToday } = require("./notionTaskPage");
-const { buildHabitsPendingMessage, buildHabitsPendingKeyboard } = require("./habitTelegramMenu");
+const { getPendingHabitsForToday } = require("../lib/notionTaskPage");
+const { buildHabitsPendingMessage, buildHabitsPendingKeyboard } = require("../lib/habitTelegramMenu");
 
 async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;

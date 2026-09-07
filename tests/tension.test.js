@@ -6,10 +6,10 @@ const {
     parseTensionSlashContent,
     normalizeTensionQuien,
     TENSION_INVALID_FORMAT_MSG,
-} = require("../api/notionTaskPage");
+} = require("../lib/notionTaskPage");
 
 const webhookPath = path.resolve(__dirname, "../api/telegram-webhook.js");
-const notionPath = path.resolve(__dirname, "../api/notionTaskPage.js");
+const notionPath = path.resolve(__dirname, "../lib/notionTaskPage.js");
 
 function createMockRes() {
     return {
@@ -98,7 +98,7 @@ test("T/ con formato inválido no llama a Notion", async () => {
     const apiCalls = [];
     let created = false;
 
-    const realNotion = require("../api/notionTaskPage");
+    const realNotion = require("../lib/notionTaskPage");
     delete require.cache[webhookPath];
     delete require.cache[notionPath];
     require.cache[notionPath] = {

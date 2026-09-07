@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { formidable } = require("formidable");
-const { createNotionTaskPage } = require("./notionTaskPage");
+const { createNotionTaskPage } = require("../lib/notionTaskPage");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));

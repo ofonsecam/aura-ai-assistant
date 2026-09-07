@@ -1,4 +1,4 @@
-const { createNotionTaskPage } = require("./notionTaskPage");
+const { createNotionTaskPage } = require("../lib/notionTaskPage");
 
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") {

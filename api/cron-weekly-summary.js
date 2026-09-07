@@ -2,7 +2,7 @@
  * Resumen semanal breve (domingo 20:00 Bogotá ≈ `0 1 * * 1` UTC).
  * Cuenta tareas completadas en los últimos 7 días según Fecha de Cierre (Hecho/Done/Cumplida).
  */
-const { getCompletedTasksCountLast7DaysBogota } = require("./notionTaskPage");
+const { getCompletedTasksCountLast7DaysBogota } = require("../lib/notionTaskPage");
 
 function verifyCronAuthorization(req) {
     const cronSecret = process.env.CRON_SECRET;

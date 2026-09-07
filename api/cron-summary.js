@@ -1,4 +1,4 @@
-const { getDailyTasks, getOverdueTasks } = require("./notionTaskPage");
+const { getDailyTasks, getOverdueTasks } = require("../lib/notionTaskPage");
 
 /**
  * Resumen de tareas del día (Vercel cron-summary, UTC → Bogotá):

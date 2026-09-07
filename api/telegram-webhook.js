@@ -21,18 +21,18 @@ const {
     parseTaskText,
     taskDateToBogotaYmd,
     getNextSundayBogotaYmd,
-} = require("./notionTaskPage");
+} = require("../lib/notionTaskPage");
 const {
     getCategoryEmoji,
     sortTasksByCategoryPriority,
-} = require("./categoryPriority");
-const { tryHandleMeetingSlashCommand } = require("./googleCalendarMeeting");
+} = require("../lib/categoryPriority");
+const { tryHandleMeetingSlashCommand } = require("../lib/googleCalendarMeeting");
 const {
     HABIT_CALLBACK_PREFIX,
     decodeHabitIndexCallback,
     buildHabitsPendingMessage,
     buildHabitsPendingKeyboard,
-} = require("./habitTelegramMenu");
+} = require("../lib/habitTelegramMenu");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));

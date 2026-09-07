@@ -6,7 +6,7 @@ const {
     buildHabitsPendingKeyboard,
     sortHabitCheckboxPropertyNames,
     resolveHabitPropertyKeyBySortedIndex,
-} = require("../api/habitTelegramMenu");
+} = require("../lib/habitTelegramMenu");
 
 test("callback_data de hábitos usa índice del esquema ordenado alfabéticamente", () => {
     const sortedCheckboxNames = ["Ejercicio", "Oración matutina profunda", "Lectura"];

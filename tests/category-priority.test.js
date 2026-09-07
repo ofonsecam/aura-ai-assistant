@@ -8,8 +8,8 @@ const {
     getCategoryPriority,
     getCategoryEmoji,
     sortTasksByCategoryPriority,
-} = require("../api/categoryPriority");
-const { formatSummaryTasksText } = require("../api/notionTaskPage");
+} = require("../lib/categoryPriority");
+const { formatSummaryTasksText } = require("../lib/notionTaskPage");
 const webhook = require("../api/telegram-webhook");
 
 test("mapeo de prioridad y emoji de rombo por categoría", () => {

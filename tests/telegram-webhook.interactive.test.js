@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const webhookPath = path.resolve(__dirname, "../api/telegram-webhook.js");
-const notionPath = path.resolve(__dirname, "../api/notionTaskPage.js");
+const notionPath = path.resolve(__dirname, "../lib/notionTaskPage.js");
 
 function createMockRes() {
     return {
