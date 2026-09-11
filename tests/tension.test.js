@@ -30,25 +30,41 @@ function createMockRes() {
     };
 }
 
-test("parseTensionSlashContent acepta Oscar/Yulis y lectura XXX/XX", () => {
+test("parseTensionSlashContent acepta Oscar/Yulis/Yulieth exactos y lectura XXX/XX", () => {
     assert.deepEqual(parseTensionSlashContent("Oscar 126/86"), {
         ok: true,
         quien: "Oscar",
         tension: "126/86",
     });
-    assert.deepEqual(parseTensionSlashContent("  yulis   120 / 80 "), {
+    assert.deepEqual(parseTensionSlashContent("Yulis 120/80"), {
         ok: true,
         quien: "Yulis",
         tension: "120/80",
     });
+    assert.deepEqual(parseTensionSlashContent("Yulieth 118/76"), {
+        ok: true,
+        quien: "Yulieth",
+        tension: "118/76",
+    });
+    assert.deepEqual(parseTensionSlashContent("  Yulis   120 / 80 "), {
+        ok: true,
+        quien: "Yulis",
+        tension: "120/80",
+    });
+    assert.equal(parseTensionSlashContent("yulis 120/80").ok, false);
+    assert.equal(parseTensionSlashContent("OSCAR 126/86").ok, false);
     assert.equal(parseTensionSlashContent("Pedro 120/80").ok, false);
     assert.equal(parseTensionSlashContent("Oscar 126").ok, false);
     assert.equal(parseTensionSlashContent("").ok, false);
 });
 
-test("normalizeTensionQuien mapea al select de Notion", () => {
-    assert.equal(normalizeTensionQuien("OSCAR"), "Oscar");
+test("normalizeTensionQuien solo acepta etiquetas exactas del select", () => {
+    assert.equal(normalizeTensionQuien("Oscar"), "Oscar");
     assert.equal(normalizeTensionQuien("Yulis"), "Yulis");
+    assert.equal(normalizeTensionQuien("Yulieth"), "Yulieth");
+    assert.equal(normalizeTensionQuien("OSCAR"), null);
+    assert.equal(normalizeTensionQuien("yulis"), null);
+    assert.equal(normalizeTensionQuien("yulieth"), null);
     assert.equal(normalizeTensionQuien("otro"), null);
 });
 
@@ -83,7 +99,7 @@ test("T/ registra tensión y responde confirmación", async () => {
     const handler = require(webhookPath);
     const res = createMockRes();
     await handler(
-        { method: "POST", body: { message: { chat: { id: 9 }, text: "t/ oscar 126/86" } } },
+        { method: "POST", body: { message: { chat: { id: 9 }, text: "t/ Oscar 126/86" } } },
         res
     );
 
@@ -91,6 +107,47 @@ test("T/ registra tensión y responde confirmación", async () => {
     assert.deepEqual(capturedPayload, { quien: "Oscar", tension: "126/86" });
     const send = apiCalls.find((c) => c.endpoint === "sendMessage");
     assert.match(send.body.text, /Tensión registrada con éxito.*para Oscar: 126\/86 \(2026-08-24\)/);
+});
+
+test("T/ Yulieth registra con etiqueta exacta", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    const apiCalls = [];
+    let capturedPayload = null;
+
+    const realNotion = require(notionPath);
+    delete require.cache[webhookPath];
+    delete require.cache[notionPath];
+    require.cache[notionPath] = {
+        id: notionPath,
+        filename: notionPath,
+        loaded: true,
+        exports: {
+            ...realNotion,
+            createNotionTensionPage: async (payload) => {
+                capturedPayload = payload;
+                return { ok: true, dateYmd: "2026-08-24", quien: payload.quien, tension: payload.tension };
+            },
+        },
+    };
+
+    global.fetch = async (url, options = {}) => {
+        const endpoint = String(url).split("/").pop();
+        const body = options.body ? JSON.parse(options.body) : {};
+        apiCalls.push({ endpoint, body });
+        return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) };
+    };
+
+    const handler = require(webhookPath);
+    const res = createMockRes();
+    await handler(
+        { method: "POST", body: { message: { chat: { id: 9 }, text: "T/ Yulieth 118/76" } } },
+        res
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(capturedPayload, { quien: "Yulieth", tension: "118/76" });
+    const send = apiCalls.find((c) => c.endpoint === "sendMessage");
+    assert.match(send.body.text, /para Yulieth: 118\/76/);
 });
 
 test("T/ con formato inválido no llama a Notion", async () => {
@@ -163,6 +220,7 @@ test("/help incluye el comando de tensión", async () => {
 
     const send = apiCalls.find((c) => c.endpoint === "sendMessage");
     assert.match(send.body.text, /Tensión/);
-    assert.match(send.body.text, /T\/ Oscar\|Yulis/);
+    assert.match(send.body.text, /T\/ Oscar\|Yulis\|Yulieth/);
+    assert.match(send.body.text, /Aura AI v2\.9\.3\.3\.4/);
     assert.equal(send.body.parse_mode, undefined);
 });

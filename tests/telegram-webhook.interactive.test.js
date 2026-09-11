@@ -39,13 +39,13 @@ function loadHandler(notionOverrides = {}) {
             const raw = String(content || "").replace(/\s+/g, " ").trim();
             const m = raw.match(/^(\S+)\s+(\d{2,3})\s*\/\s*(\d{2,3})$/);
             if (!m) return { ok: false };
-            const key = m[1].toLowerCase();
-            const quien = key === "oscar" ? "Oscar" : key === "yulis" ? "Yulis" : null;
+            const quien =
+                m[1] === "Oscar" || m[1] === "Yulis" || m[1] === "Yulieth" ? m[1] : null;
             if (!quien) return { ok: false };
             return { ok: true, quien, tension: `${m[2]}/${m[3]}` };
         },
         TENSION_INVALID_FORMAT_MSG:
-            "⚠️ Formato inválido. Usa: T/ <Oscar|Yulis> <Sistólica/Diastólica> (Ej: T/ Oscar 126/86)",
+            "⚠️ Formato inválido. Usa: T/ <Oscar|Yulis|Yulieth> <Sistólica/Diastólica> (Ej: T/ Oscar 126/86)",
         createNotionMinutePage: async () => ({ ok: true }),
         createNotionActivityPage: async () => ({ ok: true }),
         parseExpenseAmount: () => 0,

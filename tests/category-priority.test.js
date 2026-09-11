@@ -19,30 +19,33 @@ test("mapeo de prioridad y emoji de rombo por categoría", () => {
     assert.equal(getCategoryEmoji("Martin"), "🔹");
     assert.equal(getCategoryPriority("Personales"), 3);
     assert.equal(getCategoryEmoji("Personales"), "🤍");
-    assert.equal(getCategoryPriority("Iglesia"), 4);
+    assert.equal(getCategoryPriority("Tareas_u"), 4);
+    assert.equal(getCategoryEmoji("Tareas_u"), "🔵");
+    assert.equal(getCategoryPriority("Iglesia"), 5);
     assert.equal(getCategoryEmoji("Iglesia"), "🟫");
-    assert.equal(getCategoryPriority("F_i"), 5);
+    assert.equal(getCategoryPriority("F_i"), 6);
     assert.equal(getCategoryEmoji("F_i"), "🔴");
-    assert.equal(getCategoryPriority("Aseo"), 6);
+    assert.equal(getCategoryPriority("Aseo"), 7);
     assert.equal(getCategoryEmoji("Aseo"), "🩶");
-    assert.equal(getCategoryPriority("Carrera"), 7);
+    assert.equal(getCategoryPriority("Carrera"), 8);
     assert.equal(getCategoryEmoji("Carrera"), "🟡");
-    assert.equal(getCategoryPriority("Universidad"), 8);
+    assert.equal(getCategoryPriority("Universidad"), 9);
     assert.equal(getCategoryEmoji("Universidad"), "🟡");
-    assert.equal(getCategoryPriority("Traffix"), 9);
+    assert.equal(getCategoryPriority("Traffix"), 10);
     assert.equal(getCategoryEmoji("Traffix"), "🟫");
-    assert.equal(getCategoryPriority("S_j"), 10);
+    assert.equal(getCategoryPriority("S_j"), 11);
     assert.equal(getCategoryEmoji("S_j"), "🟢");
 });
 
-test("categorías nuevas o alias usan prioridad >= 11 y emoji 🔹", () => {
+test("categorías nuevas o alias usan prioridad >= 12 y emoji 🔹", () => {
     assert.equal(getCategoryPriority("IA Dev"), DEFAULT_CATEGORY_PRIORITY);
     assert.equal(getCategoryEmoji("IA Dev"), DEFAULT_CATEGORY_EMOJI);
-    assert.ok(getCategoryPriority("NuevaCategoria") >= 11);
+    assert.ok(getCategoryPriority("NuevaCategoria") >= 12);
     assert.equal(getCategoryEmoji("NuevaCategoria"), "🔹");
-    assert.equal(getCategoryPriority("Trabajo Traffix"), 9);
+    assert.equal(getCategoryPriority("Trabajo Traffix"), 10);
     assert.equal(getCategoryEmoji("Trabajo Traffix"), "🟫");
-    assert.equal(Object.keys(CATEGORY_PRIORITY_CONFIG).length, 10);
+    assert.equal(getCategoryPriority("tareas_u"), 4);
+    assert.equal(Object.keys(CATEGORY_PRIORITY_CONFIG).length, 11);
 });
 
 test("sortTasksByCategoryPriority ordena por prioridad y conserva orden original dentro de categoría", () => {
@@ -140,6 +143,8 @@ test("/lm omite fecha bajo tarea; /lv la conserva", () => {
     assert.match(lv.text, /1\. 🔹 Martin - Vencer\n📅 \*/);
 });
 
-test("helpMessage reporta v2.9.3.3", () => {
-    assert.match(webhook.helpMessage, /Aura AI v2\.9\.3\.3/);
+test("helpMessage reporta v2.9.3.3.4", () => {
+    assert.match(webhook.helpMessage, /Aura AI v2\.9\.3\.3\.4/);
+    assert.match(webhook.helpMessage, /Tareas_u/);
+    assert.match(webhook.helpMessage, /Oscar\|Yulis\|Yulieth/);
 });

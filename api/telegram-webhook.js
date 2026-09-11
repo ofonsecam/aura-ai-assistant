@@ -66,11 +66,12 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3.2
+📖 Manual de Aura AI v2.9.3.3.4
 
 🛠 Gestión de Tareas
 
 Área/ ver → Filtra pendientes
+(Prioridad 4: Tareas_u · Yu, Martin, Personales, Iglesia, F_i, Aseo, Carrera, Universidad, Traffix, S_j)
 
 /ld → Ver tareas del día (hoy)
 /lm → Ver tareas de mañana
@@ -98,7 +99,7 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
 $ [Monto] [Concepto] → Registro gasto
 
-🩺 Tensión: T/ Oscar|Yulis 120/80 → Registra la toma de tensión en DB_Tension
+🩺 Tensión: T/ Oscar|Yulis|Yulieth 120/80 → Registra la toma de tensión en DB_Tension (etiquetas exactas)
 __________________________________________________________________`;
 
 const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
