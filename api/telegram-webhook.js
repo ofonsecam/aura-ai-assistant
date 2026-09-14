@@ -4,7 +4,13 @@ const {
     createNotionExpensePage,
     createNotionTensionPage,
     parseTensionSlashContent,
+    parseTensionQuery,
+    queryNotionTensionLast21Days,
+    queryNotionTensionTop5,
+    formatTensionHistoryTelegramMessage,
+    formatTensionTop5TelegramMessage,
     TENSION_INVALID_FORMAT_MSG,
+    TENSION_HISTORY_MISSING_QUIEN_MSG,
     parseExpenseAmount,
     normalizeNotionArea,
     readNotionTasks,
@@ -66,12 +72,11 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3.4
+📖 Manual de Aura AI v2.9.3.3.7
 
 🛠 Gestión de Tareas
 
 Área/ ver → Filtra pendientes
-(Prioridad 4: Tareas_u · Yu, Martin, Personales, Iglesia, F_i, Aseo, Carrera, Universidad, Traffix, S_j)
 
 /ld → Ver tareas del día (hoy)
 /lm → Ver tareas de mañana
@@ -100,6 +105,8 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 $ [Monto] [Concepto] → Registro gasto
 
 🩺 Tensión: T/ Oscar|Yulis|Yulieth 120/80 → Registra la toma de tensión en DB_Tension (etiquetas exactas)
+🩺 Historial 21 días: his tension Oscar | hist tension Yulis | tensión de Yulieth
+🩺 Top 5: top5 tension Oscar | top 5 tension de Yulis
 __________________________________________________________________`;
 
 const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
@@ -1102,11 +1109,12 @@ async function handleTensionSlashCommand(token, chatId, text) {
                 quien: result.quien,
                 tension: result.tension,
                 dateYmd: result.dateYmd,
+                dateStamp: result.dateStamp,
             });
             await telegramSendMessage(
                 token,
                 chatId,
-                `✅ Tensión registrada con éxito mi papacho para ${result.quien}: ${result.tension} (${result.dateYmd})`,
+                `✅ Tensión registrada con éxito mi papacho para ${result.quien}: ${result.tension} (${result.dateStamp || result.dateYmd})`,
                 null,
                 null
             );
@@ -1117,6 +1125,50 @@ async function handleTensionSlashCommand(token, chatId, text) {
             token,
             chatId,
             `❌ No pude registrar la tensión my little assosiate (${tensionErr.message || "error de red o API"}). Inténtalo de nuevo.`,
+            null,
+            null
+        );
+    }
+    return true;
+}
+
+/**
+ * Intercepta consultas de tensión (historial 21 días y top 5) antes de Gemini.
+ * @returns {Promise<boolean>}
+ */
+async function handleTensionHistoryQuery(token, chatId, text) {
+    const parsed = parseTensionQuery(text);
+    if (!parsed.ok && parsed.missingQuien) {
+        await telegramSendMessage(token, chatId, TENSION_HISTORY_MISSING_QUIEN_MSG, null, null);
+        return true;
+    }
+    if (!parsed.ok) return false;
+    const intent = parsed.intent === "top5" ? "top5" : "history";
+    console.log("[tension-query] enter", { chatId, intent, quien: parsed.quien });
+    try {
+        if (intent === "top5") {
+            const result = await queryNotionTensionTop5(parsed.quien);
+            if (typeof result === "string") {
+                console.error("[tension-top5] notion error", result);
+                await telegramSendMessage(token, chatId, result, null, null);
+                return true;
+            }
+            await telegramSendMessage(token, chatId, formatTensionTop5TelegramMessage(result), null, null);
+            return true;
+        }
+        const result = await queryNotionTensionLast21Days(parsed.quien);
+        if (typeof result === "string") {
+            console.error("[tension-history] notion error", result);
+            await telegramSendMessage(token, chatId, result, null, null);
+            return true;
+        }
+        await telegramSendMessage(token, chatId, formatTensionHistoryTelegramMessage(result), null, null);
+    } catch (historyErr) {
+        console.error("[tension-query] exception", historyErr);
+        await telegramSendMessage(
+            token,
+            chatId,
+            `❌ No pude consultar la tensión my little assosiate (${historyErr.message || "error de red o API"}). Inténtalo de nuevo.`,
             null,
             null
         );
@@ -1620,6 +1672,10 @@ module.exports = async function handler(req, res) {
         }
 
         if (await handleInlineSlashPrefix(token, chatId, text)) {
+            return res.status(200).send("OK");
+        }
+
+        if (await handleTensionHistoryQuery(token, chatId, text)) {
             return res.status(200).send("OK");
         }
 

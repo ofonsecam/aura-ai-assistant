@@ -44,8 +44,26 @@ function loadHandler(notionOverrides = {}) {
             if (!quien) return { ok: false };
             return { ok: true, quien, tension: `${m[2]}/${m[3]}` };
         },
+        parseTensionHistoryQuery: () => ({ ok: false }),
+        parseTensionQuery: () => ({ ok: false }),
+        queryNotionTensionLast21Days: async () => ({
+            ok: true,
+            quien: "Oscar",
+            fromYmd: "2026-08-24",
+            toYmd: "2026-09-14",
+            readings: [],
+        }),
+        queryNotionTensionTop5: async () => ({
+            ok: true,
+            quien: "Oscar",
+            readings: [],
+        }),
+        formatTensionHistoryTelegramMessage: () => "",
+        formatTensionTop5TelegramMessage: () => "",
         TENSION_INVALID_FORMAT_MSG:
             "⚠️ Formato inválido. Usa: T/ <Oscar|Yulis|Yulieth> <Sistólica/Diastólica> (Ej: T/ Oscar 126/86)",
+        TENSION_HISTORY_MISSING_QUIEN_MSG:
+            "⚠️ Dime de quién es la tensión mi papacho: Oscar, Yulis o Yulieth.",
         createNotionMinutePage: async () => ({ ok: true }),
         createNotionActivityPage: async () => ({ ok: true }),
         parseExpenseAmount: () => 0,
