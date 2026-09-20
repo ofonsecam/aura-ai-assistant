@@ -54,7 +54,8 @@ function buildSystemInstruction(referenceTimeMmDdYy) {
 
 Reglas de clasificación:
 - TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha.
-  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Trabajo secundario, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales, Matrimonio; por defecto Personales), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
+  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Trabajo secundario, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales, Matrimonio; por defecto Personales; usa Iglesia si hay entrevista, reunión, primaria, templo, seminario, etc.), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
+  Opcional si Area es Iglesia: "organizacion" (Obispado|RP|Seminarios|Templo e Historia Familiar|As|Primaria), "tipoIglesia" (Reuniones|Llamamientos|Seguimientos|Entrevistas|Actividades). Si no estás seguro, omítelos.
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
 - QUERY: el usuario pregunta qué debe hacer, qué tiene pendiente, su lista de tareas, o consulta sus pendientes sin crear nada nuevo.
@@ -72,7 +73,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3.7
+📖 Manual de Aura AI v2.9.3.3.8
 
 🛠 Gestión de Tareas
 
@@ -82,9 +83,10 @@ __________________________________________________________________
 /lm → Ver tareas de mañana
 /lv → Ver tareas vencidas
 
-⛪️ Tareas pendientes de reuniones 
+⛪️ Iglesia
 
-/syncminutas - Sincroniza tareas pendientes de las reuniones grabadas.
+Iglesia/ tarea → Área Iglesia. Palabras (entrevista, primaria, templo…) rellenan Organización y Tipo si calzan.
+/syncminutas → Tareas pendientes de reuniones grabadas.
 
 🧹 Plan semanal de aseo
 
@@ -1799,6 +1801,8 @@ module.exports = async function handler(req, res) {
                 Name: name,
                 Area: data.Area || "Personales",
                 Fecha: fechaYmd,
+                organizacion: data.organizacion,
+                tipoIglesia: data.tipoIglesia,
             });
             const geminiReply = formatTaskSavedTelegramReply(geminiTaskResult);
             await telegramSendMessage(token, chatId, geminiReply.text, null, geminiReply.parseMode);

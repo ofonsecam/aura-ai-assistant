@@ -234,7 +234,7 @@ test("/help incluye el comando de tensión", async () => {
     assert.match(send.body.text, /T\/ Oscar\|Yulis\|Yulieth/);
     assert.match(send.body.text, /his tension/i);
     assert.match(send.body.text, /top5 tension/i);
-    assert.match(send.body.text, /Aura AI v2\.9\.3\.3\.7/);
+    assert.match(send.body.text, /Aura AI v2\.9\.3\.3\.8/);
     assert.equal(send.body.parse_mode, undefined);
 });
 
