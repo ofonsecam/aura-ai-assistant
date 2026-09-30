@@ -47,7 +47,8 @@ test("extractInvoiceData envía la factura en base64 y parsea el JSON", async ()
         assert.equal(seen.apiKey, "test-key");
         assert.equal(seen.modelParams.model, INVOICE_MODEL);
         assert.equal(INVOICE_MODEL, "gemini-2.5-flash");
-        assert.match(seen.modelParams.systemInstruction, /NIT/);
+        assert.equal(seen.modelParams.systemInstruction, undefined);
+        assert.match(seen.parts[0], /auditor fiscal/);
         assert.equal(seen.modelParams.generationConfig.responseMimeType, "application/json");
         assert.equal(seen.requestOptions.apiVersion, "v1");
         assert.equal(seen.parts[1].inlineData.mimeType, "image/jpeg");
@@ -65,6 +66,17 @@ test("extractInvoiceData acepta JSON envuelto en markdown y nulls", async () => 
     }));
     const result = await extractInvoiceData(Buffer.from("pdf"), "application/pdf");
     assert.deepEqual(result, { nit: null, razonSocial: "D1" });
+});
+
+test("extractInvoiceData limpia markdown residual y texto alrededor del JSON", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    const { extractInvoiceData } = loadGeminiService(async () => ({
+        response: {
+            text: () => "Resultado:\n```JSON\n{\"NIT\": \"900.111.222-3\", \"Razón Social\": \"Éxito\"}\n```\nListo.",
+        },
+    }));
+    const result = await extractInvoiceData(Buffer.from("img"), "image/jpeg");
+    assert.deepEqual(result, { nit: "900.111.222-3", razonSocial: "Éxito" });
 });
 
 test("extractInvoiceData lanza si el JSON es inválido", async () => {

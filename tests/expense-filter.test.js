@@ -107,6 +107,7 @@ test("gasto de texto crea página sin soporte Drive", async () => {
         razonSocial: null,
     });
     assert.match(sent[0], /Gasto registrado/);
+    assert.doesNotMatch(sent[0], /Razón Social/);
 });
 
 test("gasto con foto descarga de Telegram, sube a Drive y guarda el link", async () => {
@@ -140,7 +141,8 @@ test("gasto con foto descarga de Telegram, sube a Drive y guarda el link", async
             caption: "/gasto 250000 llantas carro",
             photo: [{ file_id: "small" }, { file_id: "big" }],
         };
-        const handled = await tryHandleGastoMessage("t", 1, message, async () => {});
+        const sent = [];
+        const handled = await tryHandleGastoMessage("t", 1, message, async (_t, _c, text) => sent.push(text));
         assert.equal(handled, true);
         assert.equal(uploaded.mimeType, "image/jpeg");
         assert.equal(uploaded.buffer.toString(), "img");
@@ -150,6 +152,8 @@ test("gasto con foto descarga de Telegram, sube a Drive y guarda el link", async
         assert.equal(created.soporteDriveUrl, "https://drive.google.com/file/d/f1/view");
         assert.equal(created.nitCedula, "900123456-1");
         assert.equal(created.razonSocial, "Ferretería El Roble");
+        assert.match(sent[0], /🏢 Razón Social: Ferretería El Roble/);
+        assert.match(sent[0], /🆔 NIT: 900123456-1/);
     } finally {
         axios.get = originalGet;
     }
@@ -196,7 +200,9 @@ test("si Gemini falla el gasto formal igual se sube a Drive y se registra", asyn
         assert.equal(created.soporteDriveUrl, "https://drive.google.com/file/d/f1/view");
         assert.equal(created.clasificacionFiscal, "Categoría 1 - Formal");
         assert.match(sent[0], /Gasto registrado/);
-        assert.match(logged.join("\n"), /Gemini no pudo extraer/);
+        assert.match(sent[0], /🏢 Razón Social: No detectada/);
+        assert.match(sent[0], /🆔 NIT: No detectado/);
+        assert.match(logged.join("\n"), /Gemini no pudo extraer NIT\/razón social: Gemini devolvió un JSON inválido/);
     } finally {
         axios.get = originalGet;
         console.error = originalError;
