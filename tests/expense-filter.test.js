@@ -44,6 +44,8 @@ test("parseGastoCommand extrae monto y descripción", () => {
         monto: 120000,
         descripcion: "mercado D1",
     });
+    assert.equal(parseGastoCommand("/Gasto 15000").monto, 15000);
+    assert.equal(parseGastoCommand("/GASTO 15000 taxi").descripcion, "taxi");
     assert.equal(parseGastoCommand("/gasto 5000").descripcion, "Gasto");
     assert.equal(parseGastoCommand("/gasto almuerzo").ok, false);
     assert.equal(parseGastoCommand("/gasto").ok, false);

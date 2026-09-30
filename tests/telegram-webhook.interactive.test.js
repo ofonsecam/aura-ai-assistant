@@ -28,7 +28,6 @@ function loadHandler(notionOverrides = {}) {
     const baseNotionExports = {
         createNotionTaskPage: async () => ({ ok: true, id: "x", url: "", databaseId: "db", databaseName: "DB" }),
         createNotionNotePage: async () => ({ ok: true }),
-        createNotionExpensePage: async () => ({ ok: true }),
         createNotionTensionPage: async () => ({
             ok: true,
             dateYmd: "2026-08-24",
@@ -319,6 +318,31 @@ test("itask_done exitoso elimina el mensaje de acción", async () => {
     assert.ok(deleted);
     assert.equal(deleted.body.chat_id, 7);
     assert.equal(deleted.body.message_id, 88);
+});
+
+test("$ legacy responde descontinuado con la sintaxis de /gasto", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    const apiCalls = [];
+    global.fetch = async (url, options = {}) => {
+        const urlStr = String(url);
+        const body = options.body ? JSON.parse(options.body) : {};
+        apiCalls.push({ url: urlStr, body });
+        return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) };
+    };
+
+    const handler = loadHandler();
+    for (const text of ["$15000 almuerzo", "$ 20.000 comida/bebida"]) {
+        apiCalls.length = 0;
+        const res = createMockRes();
+        await handler({ method: "POST", body: { message: { chat: { id: 5 }, text } } }, res);
+        assert.equal(res.statusCode, 200);
+        assert.ok(!apiCalls.some((c) => c.url.includes("notion.com")));
+        assert.ok(!apiCalls.some((c) => c.url.includes("generativelanguage")));
+        const sends = apiCalls.filter((c) => c.url.endsWith("/sendMessage"));
+        assert.equal(sends.length, 1);
+        assert.match(sends[0].body.text, /descontinuado/);
+        assert.match(sends[0].body.text, /\/gasto \[monto\] \[descripción\]/);
+    }
 });
 
 test("/h muestra hábitos pendientes con botones", async () => {

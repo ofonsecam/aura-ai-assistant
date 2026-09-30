@@ -1,7 +1,6 @@
 const {
     createNotionTaskPage,
     createNotionNotePage,
-    createNotionExpensePage,
     createNotionTensionPage,
     parseTensionSlashContent,
     parseTensionQuery,
@@ -11,7 +10,6 @@ const {
     formatTensionTop5TelegramMessage,
     TENSION_INVALID_FORMAT_MSG,
     TENSION_HISTORY_MISSING_QUIEN_MSG,
-    parseExpenseAmount,
     normalizeNotionArea,
     readNotionTasks,
     getDailyTasks,
@@ -39,7 +37,7 @@ const {
     buildHabitsPendingMessage,
     buildHabitsPendingKeyboard,
 } = require("../lib/habitTelegramMenu");
-const { tryHandleGastoMessage } = require("../lib/expenseFilter");
+const { tryHandleGastoMessage, LEGACY_DOLLAR_DEPRECATED_MSG } = require("../lib/expenseFilter");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
@@ -103,11 +101,7 @@ Iglesia/ tarea → Área Iglesia. Palabras (entrevista, primaria, templo…) rel
 meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento. 
 Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
-💰 Finanzas
-
-$ [Monto] [Concepto] → Registro gasto rápido (sin clasificación fiscal)
-
-🧾 Control Fiscal DIAN (nuevo en v3.0.0)
+💰 Finanzas · Control Fiscal DIAN (nuevo en v3.0.0)
 
 /gasto [Monto] [Descripción] → Registra en DB_Gastos_Maestros, lo liga al periodo "Current" de DB_Periodos y aplica el Filtro de Viabilidad:
   • Menos de 50.000 sin soporte → Categoría 2 - Informal Menor · Gasto Personal
@@ -1074,23 +1068,6 @@ async function getInteractiveTasksByPromptText(promptText) {
  * Mensaje con `/` que no es comando de Telegram (`prefijo/ contenido`).
  * @returns {null | { prefix: string, prefixNorm: string, content: string }}
  */
-/**
- * Mensaje que empieza por `$`: primer número = monto; el resto del texto = concepto.
- * @returns {null | { amountStr: string, concept: string }}
- */
-function parseDollarExpenseMessage(text) {
-    if (!text.startsWith("$")) return null;
-    const rest = text.slice(1).trim();
-    if (!rest) return null;
-    const m = rest.match(/-?\d[\d.,]*/);
-    if (!m) return null;
-    const amountStr = m[0];
-    const before = rest.slice(0, m.index).trim();
-    const after = rest.slice(m.index + amountStr.length).trim();
-    const concept = [before, after].filter(Boolean).join(" ").trim() || "Gasto";
-    return { amountStr, concept };
-}
-
 function isTelegramSlashCommand(text, command) {
     return new RegExp(`^/${command}(?:@\\w+)?$`, "i").test(String(text || "").trim());
 }
@@ -1669,6 +1646,11 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        if (text.startsWith("$")) {
+            await telegramSendMessage(token, chatId, LEGACY_DOLLAR_DEPRECATED_MSG, null, null);
+            return res.status(200).send("OK");
+        }
+
         if (isTelegramSlashCommand(text, "start")) {
             await registerTelegramBotCommands(token);
             await telegramSendMessage(
@@ -1763,32 +1745,6 @@ module.exports = async function handler(req, res) {
             });
             const plusReply = formatTaskSavedTelegramReply(plusResult);
             await telegramSendMessage(token, chatId, plusReply.text, null, plusReply.parseMode);
-            return res.status(200).send("OK");
-        }
-
-        if (text.startsWith("$")) {
-            const parsed = parseDollarExpenseMessage(text);
-            if (!parsed) {
-                await telegramSendMessage(
-                    token,
-                    chatId,
-                    "⚠️ Como asi? es que soy adivino? Hable claro y diga cuanto fue mijo ej. `$15000 almuerzo`."
-                );
-                return res.status(200).send("OK");
-            }
-            const { amountStr, concept } = parsed;
-            const result = await createNotionExpensePage(amountStr, concept);
-            if (typeof result === "string" && result.startsWith("❌")) {
-                await telegramSendMessage(token, chatId, `${result} Tranqui mi papacho lo intentamos de nuevo, sumecer tranqui.`);
-            } else {
-                const montoNum = parseExpenseAmount(amountStr);
-                const montoLabel = Number.isFinite(montoNum) ? String(montoNum) : amountStr;
-                await telegramSendMessage(
-                    token,
-                    chatId,
-                    `💸 Gasto registrado mi papacho, pero sea responsable porque se emociona y paila! $${montoLabel} por ${concept}. Recuerde que tiene que moverlo a tu presupuesto mensual en Notion.`
-                );
-            }
             return res.status(200).send("OK");
         }
 
