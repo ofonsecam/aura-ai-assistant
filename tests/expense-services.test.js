@@ -63,33 +63,58 @@ test("createGastoMaestro envía el esquema exacto de DB_Gastos_Maestros", async 
     assert.deepEqual(Object.keys(props).sort(), [
         "Clasificacion Fiscal",
         "DB_Periodos",
+        "Descripcion gasto",
         "Estado DIAN",
         "Fecha de gasto",
         "Monto",
         "NIT / Cédula",
-        "Name",
         "Razón Social",
-        "Soporte Drive",
     ]);
+    assert.equal(props["Soporte Drive"], undefined);
+    assert.deepEqual(props["Descripcion gasto"], { title: [{ text: { content: "cena" } }] });
     assert.deepEqual(props.DB_Periodos, { relation: [{ id: "periodo-current" }] });
     assert.deepEqual(props["Clasificacion Fiscal"], { select: { name: "Categoría 3 - Informal Mayor" } });
     assert.deepEqual(props["Estado DIAN"], { status: { name: "Pendiente Documento Soporte" } });
     assert.deepEqual(props["NIT / Cédula"], { rich_text: [{ text: { content: "900123456-7" } }] });
     assert.deepEqual(props["Razón Social"], { rich_text: [{ text: { content: "Restaurante SAS" } }] });
-    assert.deepEqual(props["Soporte Drive"], { url: null });
     assert.deepEqual(props.Monto, { number: 75000 });
     assert.match(props["Fecha de gasto"].date.start, /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test("createGastoMaestro deja NIT y Razón Social vacíos si no llegan", async () => {
+test("createGastoMaestro omite NIT, Razón Social y Soporte Drive si no llegan", async () => {
     process.env.NOTION_TOKEN = "secret";
     process.env.NOTION_GASTOS_DB_ID = "11111111111111111111111111111111";
     process.env.NOTION_PERIODOS_DB_ID = "22222222222222222222222222222222";
     const calls = {};
     const { createGastoMaestro } = loadNotionService(calls);
-    await createGastoMaestro({ descripcion: "tinto", monto: 3000, clasificacionFiscal: "Categoría 2 - Informal Menor" });
-    assert.deepEqual(calls.create.properties["NIT / Cédula"], { rich_text: [] });
-    assert.deepEqual(calls.create.properties["Razón Social"], { rich_text: [] });
+    await createGastoMaestro({
+        descripcion: "tinto",
+        monto: 3000,
+        clasificacionFiscal: "Categoría 2 - Informal Menor",
+        nitCedula: "   ",
+        razonSocial: "",
+        soporteDriveUrl: null,
+    });
+    assert.equal(calls.create.properties["NIT / Cédula"], undefined);
+    assert.equal(calls.create.properties["Razón Social"], undefined);
+    assert.equal(calls.create.properties["Soporte Drive"], undefined);
+});
+
+test("createGastoMaestro incluye Soporte Drive solo con URL real", async () => {
+    process.env.NOTION_TOKEN = "secret";
+    process.env.NOTION_GASTOS_DB_ID = "11111111111111111111111111111111";
+    process.env.NOTION_PERIODOS_DB_ID = "22222222222222222222222222222222";
+    const calls = {};
+    const { createGastoMaestro } = loadNotionService(calls);
+    await createGastoMaestro({
+        descripcion: "factura",
+        monto: 12000,
+        clasificacionFiscal: "Categoría 1 - Deducible",
+        soporteDriveUrl: "https://drive.google.com/file/d/abc/view",
+    });
+    assert.deepEqual(calls.create.properties["Soporte Drive"], {
+        url: "https://drive.google.com/file/d/abc/view",
+    });
 });
 
 function loadDriveService(captured) {
