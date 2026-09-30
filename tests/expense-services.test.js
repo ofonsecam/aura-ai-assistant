@@ -56,9 +56,10 @@ test("createGastoMaestro envía el esquema exacto de DB_Gastos_Maestros", async 
 
     assert.deepEqual(calls.query.filter, { property: "Select", select: { equals: "Current" } });
     assert.deepEqual(calls.create.parent, {
-        type: "data_source_id",
-        data_source_id: "ds-11111111111111111111111111111111",
+        database_id: process.env.NOTION_GASTOS_DB_ID,
     });
+    assert.notEqual(calls.create.parent.database_id, process.env.NOTION_PERIODOS_DB_ID);
+    assert.ok(calls.create.properties["Descripcion gasto"]);
     const props = calls.create.properties;
     assert.deepEqual(Object.keys(props).sort(), [
         "Clasificacion Fiscal",
