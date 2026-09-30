@@ -143,8 +143,10 @@ test("/lm omite fecha bajo tarea; /lv la conserva", () => {
     assert.match(lv.text, /1\. 🔹 Martin - Vencer\n📅 \*/);
 });
 
-test("helpMessage reporta v2.9.3.3.8", () => {
-    assert.match(webhook.helpMessage, /Aura AI v2\.9\.3\.3\.8/);
+test("helpMessage reporta v3.0.0", () => {
+    assert.match(webhook.helpMessage, /Aura AI v3\.0\.0/);
+    assert.match(webhook.helpMessage, /\/gasto \[Monto\] \[Descripción\]/);
+    assert.match(webhook.helpMessage, /Ej: \/gasto 18000 almuerzo/);
     assert.match(webhook.helpMessage, /Oscar\|Yulis\|Yulieth/);
     assert.match(webhook.helpMessage, /top5 tension/i);
     assert.match(webhook.helpMessage, /his tension/i);

@@ -39,6 +39,7 @@ const {
     buildHabitsPendingMessage,
     buildHabitsPendingKeyboard,
 } = require("../lib/habitTelegramMenu");
+const { tryHandleGastoMessage } = require("../lib/expenseFilter");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
@@ -73,7 +74,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v2.9.3.3.8
+📖 Manual de Aura AI v3.0.0
 
 🛠 Gestión de Tareas
 
@@ -104,7 +105,17 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
 💰 Finanzas
 
-$ [Monto] [Concepto] → Registro gasto
+$ [Monto] [Concepto] → Registro gasto rápido (sin clasificación fiscal)
+
+🧾 Control Fiscal DIAN (nuevo en v3.0.0)
+
+/gasto [Monto] [Descripción] → Registra en DB_Gastos_Maestros, lo liga al periodo "Current" de DB_Periodos y aplica el Filtro de Viabilidad:
+  • Menos de 50.000 sin soporte → Categoría 2 - Informal Menor · Gasto Personal
+  • 50.000 o más sin soporte → Categoría 3 - Informal Mayor · Pendiente Documento Soporte
+  • Con foto o PDF adjunto → sube la factura a Google Drive y guarda el link en "Soporte Drive"
+Ej: /gasto 18000 almuerzo corrientazo
+Ej: /gasto 120.000 mercado D1
+Ej: 📎 Foto de la factura con pie de foto: /gasto 250000 llantas carro
 
 🩺 Tensión: T/ Oscar|Yulis|Yulieth 120/80 → Registra la toma de tensión en DB_Tension (etiquetas exactas)
 🩺 Historial 21 días: his tension Oscar | hist tension Yulis | tensión de Yulieth
@@ -131,6 +142,7 @@ const TELEGRAM_BOT_COMMANDS = [
     { command: "h", description: "Hábitos pendientes de hoy" },
     { command: "syncminutas", description: "Sincronizar tareas desde minutas de reuniones" },
     { command: "syncaseo", description: "Sincroniza las tareas del plan semanal de aseo" },
+    { command: "gasto", description: "Registrar gasto fiscal: /gasto monto descripción" },
 ];
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
@@ -1650,6 +1662,10 @@ module.exports = async function handler(req, res) {
 
         if (message.voice) {
             await telegramSendMessage(token, chatId, "🎙️ Solo proceso *texto*. Escribe tu mensaje o usa /help.");
+            return res.status(200).send("OK");
+        }
+
+        if (await tryHandleGastoMessage(token, chatId, message, telegramSendMessage)) {
             return res.status(200).send("OK");
         }
 
