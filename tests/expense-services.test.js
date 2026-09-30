@@ -82,6 +82,19 @@ test("createGastoMaestro envía el esquema exacto de DB_Gastos_Maestros", async 
     assert.match(props["Fecha de gasto"].date.start, /^\d{4}-\d{2}-\d{2}$/);
 });
 
+test("createGastoMaestro rechaza usar NOTION_PERIODOS_DB_ID como parent", async () => {
+    process.env.NOTION_TOKEN = "secret";
+    process.env.NOTION_GASTOS_DB_ID = "22222222222222222222222222222222";
+    process.env.NOTION_PERIODOS_DB_ID = "22222222222222222222222222222222";
+    const calls = {};
+    const { createGastoMaestro } = loadNotionService(calls);
+    await assert.rejects(
+        () => createGastoMaestro({ descripcion: "cena", monto: 1, clasificacionFiscal: "Categoría 1 - Deducible" }),
+        /NOTION_GASTOS_DB_ID no puede ser el mismo valor que NOTION_PERIODOS_DB_ID/
+    );
+    assert.equal(calls.create, undefined);
+});
+
 test("createGastoMaestro omite NIT, Razón Social y Soporte Drive si no llegan", async () => {
     process.env.NOTION_TOKEN = "secret";
     process.env.NOTION_GASTOS_DB_ID = "11111111111111111111111111111111";
