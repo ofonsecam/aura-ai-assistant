@@ -132,9 +132,14 @@ test("createGastoMaestro incluye Soporte Drive solo con URL real", async () => {
 });
 
 function loadDriveService(captured) {
-    class FakeGoogleAuth {
-        constructor(opts) {
-            captured.authOptions = opts;
+    class FakeOAuth2 {
+        constructor(clientId, clientSecret) {
+            captured.oauthArgs = [clientId, clientSecret];
+            this.credentials = null;
+        }
+        setCredentials(credentials) {
+            this.credentials = credentials;
+            captured.credentials = credentials;
         }
     }
     const drive = {
@@ -149,15 +154,26 @@ function loadDriveService(captured) {
             },
         },
     };
-    mockModule(googleapisPath, { google: { auth: { GoogleAuth: FakeGoogleAuth }, drive: () => drive } });
+    mockModule(googleapisPath, {
+        google: {
+            auth: { OAuth2: FakeOAuth2 },
+            drive: (opts) => {
+                captured.driveOptions = opts;
+                return drive;
+            },
+        },
+    });
     delete require.cache[driveServicePath];
     return require(driveServicePath);
 }
 
-test("driveService usa GoogleAuth solo con GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY", async () => {
+test("driveService autentica con OAuth2 y el refresh token", async () => {
+    process.env.GOOGLE_CLIENT_ID = "client-id";
+    process.env.GOOGLE_CLIENT_SECRET = "client-secret";
+    process.env.GOOGLE_REFRESH_TOKEN = "refresh-token";
+    process.env.DRIVE_FOLDER_ID = "folder-1";
     process.env.GOOGLE_CLIENT_EMAIL = "aura@proyecto.iam.gserviceaccount.com";
     process.env.GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----\\n";
-    process.env.DRIVE_FOLDER_ID = "folder-1";
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON = JSON.stringify({ client_email: "calendar@legacy.com", private_key: "x" });
     const captured = {};
     const { uploadBufferToDrive } = loadDriveService(captured);
@@ -166,23 +182,29 @@ test("driveService usa GoogleAuth solo con GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_
 
     assert.equal(result.ok, true);
     assert.equal(result.webViewLink, "https://drive.google.com/file/d/file-1/view");
-    assert.deepEqual(captured.authOptions.credentials, {
-        client_email: "aura@proyecto.iam.gserviceaccount.com",
-        private_key: "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----",
-    });
+    assert.deepEqual(captured.oauthArgs, ["client-id", "client-secret"]);
+    assert.deepEqual(captured.credentials, { refresh_token: "refresh-token" });
+    assert.equal(captured.driveOptions.version, "v3");
+    assert.equal(captured.driveOptions.auth.credentials.refresh_token, "refresh-token");
     assert.deepEqual(captured.permission.requestBody, { role: "reader", type: "anyone" });
 });
 
-test("driveService no cae en GOOGLE_SERVICE_ACCOUNT_JSON cuando faltan sus variables", () => {
-    delete process.env.GOOGLE_CLIENT_EMAIL;
-    delete process.env.GOOGLE_PRIVATE_KEY;
+test("driveService ignora las llaves de cuenta de servicio", () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    delete process.env.GOOGLE_REFRESH_TOKEN;
     process.env.DRIVE_FOLDER_ID = "folder-1";
+    process.env.GOOGLE_CLIENT_EMAIL = "aura@proyecto.iam.gserviceaccount.com";
+    process.env.GOOGLE_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----";
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON = JSON.stringify({ client_email: "calendar@legacy.com", private_key: "x" });
     const { getDriveConfig } = loadDriveService({});
     const config = getDriveConfig();
     assert.equal(config.ok, false);
-    assert.match(config.error, /GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY/);
+    assert.match(config.error, /GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN/);
 
     const source = fs.readFileSync(driveServicePath, "utf8");
     assert.doesNotMatch(source, /process\.env\.GOOGLE_SERVICE_ACCOUNT_JSON/);
+    assert.doesNotMatch(source, /process\.env\.GOOGLE_CLIENT_EMAIL/);
+    assert.doesNotMatch(source, /process\.env\.GOOGLE_PRIVATE_KEY/);
+    assert.doesNotMatch(source, /GoogleAuth/);
 });
