@@ -49,7 +49,8 @@ test("extractInvoiceData envía la factura en base64 y parsea el JSON", async ()
         assert.equal(INVOICE_MODEL, "gemini-2.5-flash");
         assert.equal(seen.modelParams.systemInstruction, undefined);
         assert.match(seen.parts[0], /auditor fiscal/);
-        assert.equal(seen.modelParams.generationConfig.responseMimeType, "application/json");
+        assert.equal(seen.modelParams.generationConfig.responseMimeType, undefined);
+        assert.equal(seen.modelParams.generationConfig.responseSchema, undefined);
         assert.equal(seen.requestOptions.apiVersion, "v1");
         assert.equal(seen.parts[1].inlineData.mimeType, "image/jpeg");
         assert.equal(seen.parts[1].inlineData.data, buffer.toString("base64"));
