@@ -12,6 +12,7 @@
   ],
   "functions": {
     "api/**/*.js": {
+      "maxDuration": 60,
       "excludeFiles": "{tests/**,.cursor/**,.git/**,docs/**,styles/**,scripts/**,**/*.{md,html,png,jpg,jpeg,gif,webp,svg}}"
     }
   }
