@@ -92,6 +92,43 @@ test("extractInvoiceData lanza si el JSON es inválido", async () => {
     );
 });
 
+test("generarIdeaDetalle arma el prompt on-demand y automático", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    const { seen, generarIdeaDetalle, buildDetallePrompt } = loadGeminiService(async (prompt) => {
+        seen.prompt = prompt;
+        return { response: { text: () => "  Déjale una nota en el espejo.  " } };
+    });
+
+    const idea = await generarIdeaDetalle(false);
+    assert.equal(idea, "Déjale una nota en el espejo.");
+    assert.equal(seen.prompt, buildDetallePrompt(false));
+    assert.match(seen.prompt, /Me pidieron una idea de detalle ahora mismo\./);
+    assert.doesNotMatch(seen.prompt, /recordatorio semanal automático/);
+    assert.equal(seen.modelParams.generationConfig.temperature, 0.9);
+
+    const autoPrompt = buildDetallePrompt(true);
+    assert.match(autoPrompt, /Es un recordatorio semanal automático\./);
+    assert.doesNotMatch(autoPrompt, /Me pidieron una idea de detalle ahora mismo/);
+    assert.match(autoPrompt, /esposa Yulian/);
+    assert.match(autoPrompt, /sin saludos y en un tono casual/);
+});
+
+test("generarIdeaDetalle exige API key y rechaza respuestas vacías", async () => {
+    const previousKey = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    const { generarIdeaDetalle } = loadGeminiService(async () => ({
+        response: { text: () => "   " },
+    }));
+    try {
+        await assert.rejects(() => generarIdeaDetalle(false), /GEMINI_API_KEY/);
+        process.env.GEMINI_API_KEY = "test-key";
+        await assert.rejects(() => generarIdeaDetalle(true), /vacía/);
+    } finally {
+        if (previousKey == null) delete process.env.GEMINI_API_KEY;
+        else process.env.GEMINI_API_KEY = previousKey;
+    }
+});
+
 test("extractInvoiceData exige API key y un buffer", async () => {
     const previousKey = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;

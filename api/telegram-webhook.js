@@ -38,6 +38,7 @@ const {
     buildHabitsPendingKeyboard,
 } = require("../lib/habitTelegramMenu");
 const { tryHandleGastoMessage, LEGACY_DOLLAR_DEPRECATED_MSG } = require("../lib/expenseFilter");
+const { generarIdeaDetalle } = require("../lib/geminiService");
 
 function getBogotaReferenceTimeMmDdYy() {
     const ref = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
@@ -96,6 +97,10 @@ Iglesia/ tarea → Área Iglesia. Palabras (entrevista, primaria, templo…) rel
 /Nota [Nota/Texto] → Envía a Inbox
 /h → Hábitos pendientes de hoy (botones para marcar)
 
+💕 Detalle para Yulian
+
+/detalle → Idea de un detalle romántico, rápido y de bajo costo (también llega los jueves)
+
 📅 Google Calendar
 
 meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento. 
@@ -137,6 +142,7 @@ const TELEGRAM_BOT_COMMANDS = [
     { command: "syncminutas", description: "Sincronizar tareas desde minutas de reuniones" },
     { command: "syncaseo", description: "Sincroniza las tareas del plan semanal de aseo" },
     { command: "gasto", description: "Registrar gasto fiscal: /gasto monto descripción" },
+    { command: "detalle", description: "Idea de un detalle rápido para Yulian" },
 ];
 
 const MANAGE_TASK_RESCHEDULE_PROMPT = "¿que paso que paso mijo? y para cuándo mi rey?";
@@ -466,6 +472,23 @@ async function handleSyncMinutasCommand(token, chatId) {
             token,
             chatId,
             `✅ Listo my little associated! Sincronización completa: Se agregaron ${createdCount} tareas de la reunión '${minutaTitle}' Yo vere a revisar y hacer todo D1`
+        );
+    }
+}
+
+async function handleDetalleCommand(token, chatId) {
+    try {
+        const idea = await generarIdeaDetalle(false);
+        await telegramSendMessage(token, chatId, idea, null, null);
+    } catch (err) {
+        console.error("[detalle] error", err);
+        const safeMsg = String(err?.message || err).replace(/[*_`[\]]/g, "·");
+        await telegramSendMessage(
+            token,
+            chatId,
+            `⚠️ No pude generar el detalle ahora mismo mi rey: ${safeMsg}. Inténtalo de nuevo en un momento.`,
+            null,
+            null
         );
     }
 }
@@ -1576,6 +1599,11 @@ module.exports = async function handler(req, res) {
                     null
                 );
             }
+            return res.status(200).send("OK");
+        }
+
+        if (isTelegramSlashCommand(text, "detalle")) {
+            await handleDetalleCommand(token, chatId);
             return res.status(200).send("OK");
         }
 

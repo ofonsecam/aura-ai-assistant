@@ -151,4 +151,5 @@ test("helpMessage reporta v3.0.0", () => {
     assert.match(webhook.helpMessage, /top5 tension/i);
     assert.match(webhook.helpMessage, /his tension/i);
     assert.match(webhook.helpMessage, /Organizaci[oó]n y Tipo/i);
+    assert.match(webhook.helpMessage, /\/detalle/);
 });

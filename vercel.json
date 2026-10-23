@@ -8,7 +8,8 @@
     { "path": "/api/cron-weekly", "schedule": "0 0 * * 1" },
     { "path": "/api/cron-habitos", "schedule": "15 12 * * *" },
     { "path": "/api/cron-habitos", "schedule": "0 18 * * *" },
-    { "path": "/api/cron-habitos", "schedule": "40 23 * * *" }
+    { "path": "/api/cron-habitos", "schedule": "40 23 * * *" },
+    { "path": "/api/cron-detalle", "schedule": "0 21 * * 4" }
   ],
   "functions": {
     "api/**/*.js": {

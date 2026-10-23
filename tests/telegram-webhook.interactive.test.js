@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const webhookPath = path.resolve(__dirname, "../api/telegram-webhook.js");
 const notionPath = path.resolve(__dirname, "../lib/notionTaskPage.js");
+const geminiPath = path.resolve(__dirname, "../lib/geminiService.js");
 
 function createMockRes() {
     return {
@@ -24,7 +25,7 @@ function createMockRes() {
     };
 }
 
-function loadHandler(notionOverrides = {}) {
+function loadHandler(notionOverrides = {}, geminiOverrides = {}) {
     const baseNotionExports = {
         createNotionTaskPage: async () => ({ ok: true, id: "x", url: "", databaseId: "db", databaseName: "DB" }),
         createNotionNotePage: async () => ({ ok: true }),
@@ -100,11 +101,21 @@ function loadHandler(notionOverrides = {}) {
 
     delete require.cache[webhookPath];
     delete require.cache[notionPath];
+    delete require.cache[geminiPath];
     require.cache[notionPath] = {
         id: notionPath,
         filename: notionPath,
         loaded: true,
         exports: baseNotionExports,
+    };
+    require.cache[geminiPath] = {
+        id: geminiPath,
+        filename: geminiPath,
+        loaded: true,
+        exports: {
+            generarIdeaDetalle: async () => "Déjale una nota en el espejo.",
+            ...geminiOverrides,
+        },
     };
 
     return require(webhookPath);
@@ -372,4 +383,40 @@ test("/h muestra hábitos pendientes con botones", async () => {
     assert.ok(send);
     assert.match(send.body.text, /Oración/);
     assert.ok(send.body.reply_markup.inline_keyboard.length > 0);
+});
+
+test("/detalle pide una idea on-demand y la envía al chat", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    const apiCalls = [];
+    const detalleCalls = [];
+
+    global.fetch = async (url, options = {}) => {
+        const endpoint = String(url).split("/").pop();
+        const body = options.body ? JSON.parse(options.body) : {};
+        apiCalls.push({ endpoint, body });
+        if (endpoint === "sendMessage") {
+            return { ok: true, json: async () => ({ ok: true, result: { message_id: 3001 } }) };
+        }
+        return { ok: true, json: async () => ({ ok: true }) };
+    };
+
+    const handler = loadHandler({}, {
+        generarIdeaDetalle: async (esAutomatico) => {
+            detalleCalls.push(esAutomatico);
+            return "Prepárale un snack rápido.";
+        },
+    });
+    const req = {
+        method: "POST",
+        body: { message: { chat: { id: 88 }, text: "/detalle" } },
+    };
+    const res = createMockRes();
+    await handler(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(detalleCalls, [false]);
+    const send = apiCalls.find((c) => c.endpoint === "sendMessage");
+    assert.equal(send.body.chat_id, 88);
+    assert.equal(send.body.text, "Prepárale un snack rápido.");
+    assert.equal(send.body.parse_mode, undefined);
 });
