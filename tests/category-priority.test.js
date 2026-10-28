@@ -143,8 +143,8 @@ test("/lm omite fecha bajo tarea; /lv la conserva", () => {
     assert.match(lv.text, /1\. 🔹 Martin - Vencer\n📅 \*/);
 });
 
-test("helpMessage reporta v3.0.0", () => {
-    assert.match(webhook.helpMessage, /Aura AI v3\.0\.0/);
+test("helpMessage reporta v3.1.0", () => {
+    assert.match(webhook.helpMessage, /Aura AI v3\.1\.0/);
     assert.match(webhook.helpMessage, /\/gasto \[Monto\] \[Descripción\]/);
     assert.match(webhook.helpMessage, /Ej: \/gasto 18000 almuerzo/);
     assert.match(webhook.helpMessage, /Oscar\|Yulis\|Yulieth/);
@@ -152,4 +152,7 @@ test("helpMessage reporta v3.0.0", () => {
     assert.match(webhook.helpMessage, /his tension/i);
     assert.match(webhook.helpMessage, /Organizaci[oó]n y Tipo/i);
     assert.match(webhook.helpMessage, /\/detalle/);
+    assert.match(webhook.helpMessage, /DB_Workout_Tracker/);
+    assert.match(webhook.helpMessage, /s1d1/);
+    assert.match(webhook.helpMessage, /nuevo en v3\.1\.0/);
 });

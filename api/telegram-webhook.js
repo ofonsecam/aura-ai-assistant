@@ -38,6 +38,7 @@ const {
     buildHabitsPendingKeyboard,
 } = require("../lib/habitTelegramMenu");
 const { tryHandleGastoMessage, LEGACY_DOLLAR_DEPRECATED_MSG } = require("../lib/expenseFilter");
+const { tryHandleWorkoutMessage, handleWorkoutIntent } = require("../lib/workoutTracker");
 const { generarIdeaDetalle } = require("../lib/geminiService");
 
 function getBogotaReferenceTimeMmDdYy() {
@@ -50,10 +51,23 @@ function getBogotaReferenceTimeMmDdYy() {
 
 function buildSystemInstruction(referenceTimeMmDdYy) {
     return `Eres el router de Aura AI. Analiza el mensaje del usuario y responde ÚNICAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con este esquema exacto:
-{"intent": "TASK"|"NOTE"|"QUERY", "data": { ... }}
+{"intent": "TASK"|"NOTE"|"QUERY"|"WORKOUT", "data": { ... }}
 
 Reglas de clasificación:
-- TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha.
+- WORKOUT (prioridad sobre TASK): el usuario registra una sesión de salto de cuerda / cardio. Señales: "salto", "cuerda", "cardio", códigos como "s1d1" o "S1-D1", protocolos como "30/30" o "30s/30s".
+  Ejemplos: "Aura, completé salto s1d1, 30/30, todo bien sin dolor" y "Hoy hice cuerda s2d1 35/25, sentí algo de fatiga en gemelos".
+  NO crees una tarea. Responde el intent WORKOUT para que el servidor ejecute la herramienta logWorkoutSession.
+  data debe incluir:
+  "semanaSesion" (string; acepta "s1d1" o "S1-D1"; el servidor normaliza a "S1-D1", "S2-D1", "S2-D3", etc.),
+  "protocolo" (string; acepta "30/30" o "30s/30s"; el servidor normaliza a una de: "30s/30s", "35s/25s", "40s/20s", "45s/15s"),
+  "completado" (boolean; true si completó la sesión, false si dice que no la terminó),
+  "molestiaArticular" (string, UNA de estas opciones exactas):
+    "0 - Impecable" si no hay dolor, está impecable o "todo bien";
+    "1 - Fatiga muscular" si hay fatiga (gemelos u otro músculo) sin dolor de tendón;
+    "2 - Alerta tendón/periostio" si reporta dolor de tendón, espinilla, periostio o Aquiles.
+  "notas" (resumen breve de la sesión; "" si el usuario no dio notas),
+  "fecha" (YYYY-MM-DD en America/Bogota, o "" para usar la fecha de hoy).
+- TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha. No uses TASK para sesiones de salto de cuerda.
   data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Trabajo secundario, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales, Matrimonio; por defecto Personales; usa Iglesia si hay entrevista, reunión, primaria, templo, seminario, etc.), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
   Opcional si Area es Iglesia: "organizacion" (Obispado|RP|Seminarios|Templo e Historia Familiar|As|Primaria), "tipoIglesia" (Reuniones|Llamamientos|Seguimientos|Entrevistas|Actividades). Si no estás seguro, omítelos.
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
@@ -73,7 +87,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v3.0.0
+📖 Manual de Aura AI v3.1.0
 
 🛠 Gestión de Tareas
 
@@ -106,7 +120,7 @@ Iglesia/ tarea → Área Iglesia. Palabras (entrevista, primaria, templo…) rel
 meeting/ MM DD YYYY HH:MM [DURACION] TITULO → Crea evento. 
 Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 
-💰 Finanzas · Control Fiscal DIAN (nuevo en v3.0.0)
+💰 Finanzas · Control Fiscal DIAN
 
 /gasto [Monto] [Descripción] → Registra en DB_Gastos_Maestros, lo liga al periodo "Current" de DB_Periodos y aplica el Filtro de Viabilidad:
   • Menos de 50.000 sin soporte → Categoría 2 - Informal Menor · Gasto Personal
@@ -115,6 +129,13 @@ Ej: meeting/ 05 30 2026 14:30 1.5 Entrevista con ***
 Ej: /gasto 18000 almuerzo corrientazo
 Ej: /gasto 120.000 mercado D1
 Ej: 📎 Foto de la factura con pie de foto: /gasto 250000 llantas carro
+
+🪢 Cardio · Salto de cuerda (nuevo en v3.1.0)
+
+En lenguaje natural → registra en DB_Workout_Tracker
+Ej: completé salto s1d1, 30/30, todo bien sin dolor
+Ej: hoy hice cuerda s2d1 35/25, fatiga en gemelos
+Aura normaliza S1-D1 y 30s/30s. Si hay dolor de tendón o espinilla, avisa sustituir la cuerda por caminadora inclinada o descanso activo.
 
 🩺 Tensión: T/ Oscar|Yulis|Yulieth 120/80 → Registra la toma de tensión en DB_Tension (etiquetas exactas)
 🩺 Historial 21 días: his tension Oscar | hist tension Yulis | tensión de Yulieth
@@ -1190,10 +1211,28 @@ async function handleTensionHistoryQuery(token, chatId, text) {
     return true;
 }
 
+/** La barra de un protocolo (30/30, 30s/30s) no es el separador `área/tarea`. */
+function isProtocolSlash(text, idx) {
+    const left = text.slice(Math.max(0, idx - 8), idx);
+    const right = text.slice(idx + 1, idx + 9);
+    return /\d+\s*s?\s*$/i.test(left) && /^\s*s?\s*\d+/i.test(right);
+}
+
 function parseInlineSlashPrefix(text) {
     if (!text || text.startsWith("/") || !text.includes("/")) return null;
     if (/^https?:\/\//i.test(text)) return null;
-    const idx = text.indexOf("/");
+    let idx = -1;
+    for (let searchFrom = 0; searchFrom < text.length; ) {
+        const found = text.indexOf("/", searchFrom);
+        if (found === -1) break;
+        if (isProtocolSlash(text, found)) {
+            searchFrom = found + 1;
+            continue;
+        }
+        idx = found;
+        break;
+    }
+    if (idx === -1) return null;
     const prefix = text.slice(0, idx).trim();
     const content = text.slice(idx + 1).trim();
     if (!prefix) return null;
@@ -1699,6 +1738,11 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        // El protocolo "30/30" trae una barra. Si esto corriera después, el router `área/tarea` se lo comería.
+        if (await tryHandleWorkoutMessage(token, chatId, text, telegramSendMessage)) {
+            return res.status(200).send("OK");
+        }
+
         if (await handleInlineSlashPrefix(token, chatId, text)) {
             return res.status(200).send("OK");
         }
@@ -1826,6 +1870,11 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        if (intent === "WORKOUT") {
+            await handleWorkoutIntent(token, chatId, data, telegramSendMessage);
+            return res.status(200).send("OK");
+        }
+
         await telegramSendMessage(token, chatId, "⚠️ Uy nooo, no le entendi, mas despacio porque me pierdo! Mire donde mete el dedo e ntenta de nuevo.");
     } catch (err) {
         console.error("[webhook] handler exception", err);
@@ -1856,3 +1905,4 @@ module.exports.buildListCommandKeyboard = buildListCommandKeyboard;
 module.exports.COMMAND_TASKS_PAGE_SIZE = COMMAND_TASKS_PAGE_SIZE;
 module.exports.clampTaskListPage = clampTaskListPage;
 module.exports.helpMessage = helpMessage;
+module.exports.buildSystemInstruction = buildSystemInstruction;
