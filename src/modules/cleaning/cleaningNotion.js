@@ -5,7 +5,7 @@
 
 const BOGOTA_TZ = "America/Bogota";
 const PAGE_TITLE_PROPERTY = "YYYY MM DD";
-const DATE_PROPERTY = "Date";
+const DATE_PROPERTY = "Fecha";
 const NOTION_UUID_RE =
     /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i;
 
