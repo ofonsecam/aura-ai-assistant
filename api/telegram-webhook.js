@@ -24,7 +24,6 @@ const {
     markHabitCheckboxDone,
     parseTaskText,
     taskDateToBogotaYmd,
-    getNextSundayBogotaYmd,
 } = require("../lib/notionTaskPage");
 const {
     getCategoryEmoji,
@@ -37,6 +36,21 @@ const {
     buildHabitsPendingMessage,
     buildHabitsPendingKeyboard,
 } = require("../lib/habitTelegramMenu");
+const {
+    getPendingCleaningForToday,
+    resolveCleaningCheckboxPropertyBySortedIndex,
+    markCleaningCheckboxDone,
+} = require("../src/modules/cleaning/cleaningNotion");
+const {
+    CLEANING_CALLBACK_PREFIX,
+    decodeCleaningIndexCallback,
+    buildCleaningPendingMessage,
+    buildCleaningPendingKeyboard,
+} = require("../src/modules/cleaning/cleaningTelegramMenu");
+const {
+    getActiveMobilityRoutine,
+    formatMobilityRoutineMessage,
+} = require("../src/modules/mobility/mobilityNotion");
 const { tryHandleGastoMessage, LEGACY_DOLLAR_DEPRECATED_MSG } = require("../lib/expenseFilter");
 const { tryHandleWorkoutMessage, handleWorkoutIntent } = require("../lib/workoutTracker");
 const { generarIdeaDetalle } = require("../lib/geminiService");
@@ -102,9 +116,13 @@ __________________________________________________________________
 Iglesia/ tarea → Área Iglesia. Palabras (entrevista, primaria, templo…) rellenan Organización y Tipo si calzan.
 /syncminutas → Tareas pendientes de reuniones grabadas.
 
-🧹 Plan semanal de aseo
+🧹 Aseo diario
 
-/syncaseo - Sincroniza las tareas del plan semanal de aseo.
+/aseo → Tareas de limpieza correspondientes al día de hoy
+
+🏋️‍♂️ Movilidad
+
+/movilidad → Rutina de movilidad activa con instrucciones
 
 📝 Notas y Hábitos
 
@@ -147,12 +165,6 @@ const MINUTAS_READY_PROP = "Listo para tareas";
 const MINUTAS_PROCESSED_PROP = "Procesada por Aura";
 const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
 
-const CLEANING_PLAN_DATABASE_ID = (process.env.DB_CLEANING_PLAN || "").trim();
-const ASEO_READY_PROP = "Listo para tareas";
-const ASEO_PROCESSED_PROP = "Procesada por Aura";
-const ASEO_TASKS_ANCHOR_HEADING = "Tareas de aseo de la semana:";
-const ASEO_REVIEW_TASK_NAME = "Revisar y ajustar plan de aseo de la semana";
-
 const TELEGRAM_BOT_COMMANDS = [
     { command: "help", description: "Manual de comandos de Aura" },
     { command: "start", description: "Iniciar el bot" },
@@ -160,8 +172,9 @@ const TELEGRAM_BOT_COMMANDS = [
     { command: "lm", description: "Ver tareas de mañana" },
     { command: "lv", description: "Ver tareas vencidas" },
     { command: "h", description: "Hábitos pendientes de hoy" },
+    { command: "aseo", description: "Tareas de limpieza del día" },
+    { command: "movilidad", description: "Rutina de movilidad activa" },
     { command: "syncminutas", description: "Sincronizar tareas desde minutas de reuniones" },
-    { command: "syncaseo", description: "Sincroniza las tareas del plan semanal de aseo" },
     { command: "gasto", description: "Registrar gasto fiscal: /gasto monto descripción" },
     { command: "detalle", description: "Idea de un detalle rápido para Yulian" },
 ];
@@ -385,69 +398,6 @@ async function markNotionPageCheckbox(pageId, propName, value) {
     }
 }
 
-async function notionQueryReadyPagesByCheckboxes(databaseId, readyProp, processedProp, entityLabel) {
-    if (!databaseId) {
-        throw new Error(`Falta DB_CLEANING_PLAN en el entorno (Vercel → Variables).`);
-    }
-    const headers = notionHeadersOrThrow();
-    const out = [];
-    let nextCursor = null;
-    do {
-        const body = {
-            page_size: 100,
-            filter: {
-                and: [
-                    { property: readyProp, checkbox: { equals: true } },
-                    { property: processedProp, checkbox: { equals: false } },
-                ],
-            },
-        };
-        if (nextCursor) body.start_cursor = nextCursor;
-        const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            const detail = data?.message ? `${res.status}: ${data.message}` : String(res.status);
-            throw new Error(`Error consultando ${entityLabel} (${detail}).`);
-        }
-        out.push(...(Array.isArray(data.results) ? data.results : []));
-        nextCursor = data.has_more ? data.next_cursor : null;
-    } while (nextCursor);
-    return out;
-}
-
-function extractTodoTextsAfterAnchorHeading(blocks, anchorText) {
-    const todos = [];
-    let collecting = false;
-    const anchorHeadingTypes = ["heading_2", "heading_3"];
-    for (const block of blocks) {
-        const type = block?.type;
-        if (anchorHeadingTypes.includes(type)) {
-            const headingText = richTextToPlain(block?.[type]?.rich_text);
-            if (!collecting && headingText === anchorText) {
-                collecting = true;
-                continue;
-            }
-            if (collecting) break;
-        }
-        if (collecting && type === "heading_1") {
-            break;
-        }
-        if (collecting && type === "to_do") {
-            const todoText = richTextToPlain(block?.to_do?.rich_text);
-            if (todoText) todos.push(todoText);
-        }
-    }
-    return todos;
-}
-
-async function markAseoPlanAsProcessed(pageId) {
-    await markNotionPageCheckbox(pageId, ASEO_PROCESSED_PROP, true);
-}
-
 async function registerTelegramBotCommands(token) {
     if (!token) return;
     try {
@@ -514,75 +464,6 @@ async function handleDetalleCommand(token, chatId) {
     }
 }
 
-async function handleSyncAseoCommand(token, chatId) {
-    try {
-        const aseoPages = await notionQueryReadyPagesByCheckboxes(
-            CLEANING_PLAN_DATABASE_ID,
-            ASEO_READY_PROP,
-            ASEO_PROCESSED_PROP,
-            "planes de aseo"
-        );
-        if (!aseoPages.length) {
-            await telegramSendMessage(
-                token,
-                chatId,
-                "ℹ️ No encontré planes de aseo listos para sincronizar. Revise y me charla mi rey!",
-                null,
-                null
-            );
-            return;
-        }
-        for (const page of aseoPages) {
-            const pageId = String(page?.id || "").trim();
-            if (!pageId) continue;
-            const blocks = await notionListAllBlockChildren(pageId);
-            const todoTexts = extractTodoTextsAfterAnchorHeading(blocks, ASEO_TASKS_ANCHOR_HEADING);
-            let createdCount = 0;
-            for (const todoText of todoTexts) {
-                const { cleanTitle, fechaYmd } = parseSyncMinutaTodoText(todoText);
-                if (!cleanTitle) continue;
-                const createResult = await createNotionTaskPage({
-                    Name: cleanTitle,
-                    Area: "Aseo",
-                    Fecha: fechaYmd,
-                });
-                if (createResult?.ok) createdCount += 1;
-            }
-            const reviewResult = await createNotionTaskPage({
-                Name: ASEO_REVIEW_TASK_NAME,
-                Area: "Aseo",
-                Fecha: getNextSundayBogotaYmd(),
-            });
-            if (!reviewResult?.ok) {
-                console.warn("[syncaseo] no se pudo crear tarea de revisión:", reviewResult?.error);
-            }
-            await markAseoPlanAsProcessed(pageId);
-            await telegramSendMessage(
-                token,
-                chatId,
-                `✅ ¡Plan de aseo sincronizado My so!! Se agregaron ${createdCount} tareas de aseo para esta semana. A darle con toda 🧹 y no las aplace!`,
-                null,
-                null
-            );
-        }
-    } catch (err) {
-        console.error("[syncaseo] error", err);
-        const safeMsg = String(err?.message || err).replace(/[*_`[\]]/g, "·");
-        await telegramSendMessage(
-            token,
-            chatId,
-            `⚠️ No pude sincronizar el plan de aseo: ${safeMsg} Revise y me charla mi rey!`,
-            null,
-            null
-        );
-    }
-}
-
-/**
- * Respuesta de éxito/error tras crear tarea en Notion (Database ID, ID página, enlace API).
- * @param {{ ok: true, id: string, url: string, databaseId: string, databaseName: string, taskName?: string, dateYmd?: string } | { ok: false, error: string }} result
- * @returns {{ text: string, parseMode: string }}
- */
 /**
  * Separa fecha en español (chrono, ref. America/Bogota) del título. Si no hay fecha, fechaYmd es "" y Notion usa hoy.
  * @param {string} rawTitle
@@ -727,6 +608,52 @@ async function sendHabitsPendingMenu(token, chatId, opts = {}) {
         await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
     }
     return result;
+}
+
+async function sendCleaningPendingMenu(token, chatId, opts = {}) {
+    const result = await getPendingCleaningForToday();
+    if (!result.ok) {
+        if (!opts.silent) {
+            await telegramSendMessage(token, chatId, `${result.message} Tranqui mi rey, lo revisamos ya mismo!`);
+        }
+        return result;
+    }
+    const text = buildCleaningPendingMessage(result.pending, {
+        cron: opts.cron,
+        dayPrefix: result.dayPrefix,
+    });
+    const keyboard = buildCleaningPendingKeyboard(result.pending, result.sortedFilteredNames);
+    if (opts.editMessageId != null) {
+        await telegramEditMessageText(token, chatId, opts.editMessageId, text, keyboard);
+    } else {
+        await telegramSendMessageAndGetResult(token, chatId, text, keyboard);
+    }
+    if (opts.callbackQueryId) {
+        await telegramAnswerCallbackQuery(token, opts.callbackQueryId);
+    }
+    return result;
+}
+
+async function handleMovilidadCommand(token, chatId) {
+    try {
+        const result = await getActiveMobilityRoutine();
+        if (!result.ok) {
+            await telegramSendMessage(token, chatId, `${result.message} Tranqui mi rey, lo revisamos ya mismo!`);
+            return result;
+        }
+        const text = formatMobilityRoutineMessage(result.routine);
+        await telegramSendMessage(token, chatId, text);
+        return result;
+    } catch (err) {
+        console.error("[movilidad] error", err);
+        const safeMsg = String(err?.message || err).replace(/[*_`[\]]/g, "·");
+        await telegramSendMessage(
+            token,
+            chatId,
+            `⚠️ No pude cargar la rutina de movilidad: ${safeMsg}`
+        );
+        return { ok: false, message: safeMsg };
+    }
 }
 
 async function telegramAnswerCallbackQuery(token, callbackQueryId, text = "", showAlert = false) {
@@ -1404,6 +1331,46 @@ module.exports = async function handler(req, res) {
             return res.status(200).send("OK");
         }
 
+        if (cbData.startsWith(CLEANING_CALLBACK_PREFIX)) {
+            const cleaningIndex = decodeCleaningIndexCallback(cbData);
+            if (cleaningIndex == null) {
+                await telegramAnswerCallbackQuery(token, cb.id, "Tarea de aseo inválida.");
+                return res.status(200).send("OK");
+            }
+            try {
+                const [pendingState, resolvedKey] = await Promise.all([
+                    getPendingCleaningForToday(),
+                    resolveCleaningCheckboxPropertyBySortedIndex(cleaningIndex),
+                ]);
+                if (!pendingState.ok) {
+                    await telegramAnswerCallbackQuery(token, cb.id, "No pude leer aseo.");
+                    return res.status(200).send("OK");
+                }
+                if (!resolvedKey.ok) {
+                    await telegramAnswerCallbackQuery(token, cb.id, resolvedKey.message.slice(0, 200));
+                    return res.status(200).send("OK");
+                }
+                const markResult = await markCleaningCheckboxDone(
+                    resolvedKey.propertyKey,
+                    pendingState.pageId
+                );
+                await telegramAnswerCallbackQuery(
+                    token,
+                    cb.id,
+                    markResult.ok ? `✅ ${markResult.resolvedName}` : markResult.message.slice(0, 200)
+                );
+                if (markResult.ok) {
+                    await sendCleaningPendingMenu(token, cb.message.chat.id, {
+                        editMessageId: cb.message.message_id,
+                    });
+                }
+            } catch (cleaningErr) {
+                console.error("Cleaning callback error:", cleaningErr);
+                await telegramAnswerCallbackQuery(token, cb.id, "Error al marcar aseo.");
+            }
+            return res.status(200).send("OK");
+        }
+
         const navMatch = cbData.match(/^nav_p(\d+)_([a-z]+)$/);
         if (navMatch) {
             const targetPageHuman = Number(navMatch[1]);
@@ -1723,7 +1690,7 @@ module.exports = async function handler(req, res) {
             await telegramSendMessage(
                 token,
                 chatId,
-                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `Matrimonio/ tarea`, `nota/`, `/h` (hábitos) o `/lm` (mañana). /help para el manual!"
+                "🚀 Aura AI Online mi papacho. Usa `Área/ tarea`, `Matrimonio/ tarea`, `nota/`, `/h` (hábitos), `/aseo`, `/movilidad` o `/lm` (mañana). /help para el manual!"
             );
             return res.status(200).send("OK");
         }
@@ -1761,6 +1728,14 @@ module.exports = async function handler(req, res) {
                 await sendHabitsPendingMenu(token, chatId);
                 return res.status(200).send("OK");
             }
+            if (isTelegramSlashCommand(text, "aseo")) {
+                await sendCleaningPendingMenu(token, chatId);
+                return res.status(200).send("OK");
+            }
+            if (isTelegramSlashCommand(text, "movilidad")) {
+                await handleMovilidadCommand(token, chatId);
+                return res.status(200).send("OK");
+            }
             if (isTelegramSlashCommand(text, "ld")) {
                 await renderListCommandPage(token, chatId, "ld", 0);
                 return res.status(200).send("OK");
@@ -1775,10 +1750,6 @@ module.exports = async function handler(req, res) {
             }
             if (isTelegramSlashCommand(text, "syncminutas")) {
                 await handleSyncMinutasCommand(token, chatId);
-                return res.status(200).send("OK");
-            }
-            if (isTelegramSlashCommand(text, "syncaseo")) {
-                await handleSyncAseoCommand(token, chatId);
                 return res.status(200).send("OK");
             }
             await telegramSendMessage(token, chatId, "❓ Comando no reconocido mijo. Pille echele gafa y use /help");

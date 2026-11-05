@@ -1,6 +1,6 @@
 /**
  * Recordatorios proactivos de hábitos pendientes (Vercel Cron).
- * Horarios COL (UTC-5): 07:15, 13:00 y 18:40 → ver vercel.json.
+ * Horarios COL (UTC-5): 05:50, 14:00 y 19:00 → ver vercel.json.
  * Silencio total si no hay hábitos pendientes.
  */
 const { getPendingHabitsForToday } = require("../lib/notionTaskPage");

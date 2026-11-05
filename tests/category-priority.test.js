@@ -155,4 +155,7 @@ test("helpMessage reporta v3.1.0", () => {
     assert.match(webhook.helpMessage, /DB_Workout_Tracker/);
     assert.match(webhook.helpMessage, /s1d1/);
     assert.match(webhook.helpMessage, /nuevo en v3\.1\.0/);
+    assert.match(webhook.helpMessage, /\/aseo/);
+    assert.match(webhook.helpMessage, /\/movilidad/);
+    assert.doesNotMatch(webhook.helpMessage, /\/syncaseo/);
 });
