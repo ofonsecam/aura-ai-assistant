@@ -162,10 +162,17 @@ Aura normaliza S1-D1 y 30s/30s. Si hay dolor de tendón o espinilla, avisa susti
 🩺 Top 5: top5 tension Oscar | top 5 tension de Yulis
 __________________________________________________________________`;
 
-const MINUTAS_OBISPADO_DATABASE_ID = "3411358a89bc8035be29ca4fa57a744e";
 const MINUTAS_READY_PROP = "Listo para tareas";
 const MINUTAS_PROCESSED_PROP = "Procesada por Aura";
 const MINUTAS_TASKS_ANCHOR_H3 = "Tareas pendientes para asignar:";
+
+function getMinutasDatabaseIdOrThrow() {
+    const id = String(process.env.NOTION_MINUTAS_ID || "").trim();
+    if (!id) {
+        throw new Error("Falta NOTION_MINUTAS_ID en el entorno (Vercel → Variables).");
+    }
+    return id;
+}
 
 const TELEGRAM_BOT_COMMANDS = [
     { command: "help", description: "Manual de comandos de Aura" },
@@ -316,7 +323,8 @@ async function notionQueryMinutasReadyPages() {
             },
         };
         if (nextCursor) body.start_cursor = nextCursor;
-        const res = await fetch(`https://api.notion.com/v1/databases/${MINUTAS_OBISPADO_DATABASE_ID}/query`, {
+        const minutasDbId = getMinutasDatabaseIdOrThrow();
+        const res = await fetch(`https://api.notion.com/v1/databases/${minutasDbId}/query`, {
             method: "POST",
             headers,
             body: JSON.stringify(body),
