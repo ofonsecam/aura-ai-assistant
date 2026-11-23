@@ -28,6 +28,8 @@ const {
 const {
     getCategoryEmoji,
     sortTasksByCategoryPriority,
+    buildUnconfiguredReminder,
+    escapeTelegramMarkdown,
 } = require("../lib/categoryPriority");
 const { tryHandleMeetingSlashCommand } = require("../lib/googleCalendarMeeting");
 const {
@@ -82,7 +84,7 @@ Reglas de clasificación:
   "notas" (resumen breve de la sesión; "" si el usuario no dio notas),
   "fecha" (YYYY-MM-DD en America/Bogota, o "" para usar la fecha de hoy).
 - TASK: el usuario quiere crear o registrar una tarea, recordatorio o pendiente con posible área o fecha. No uses TASK para sesiones de salto de cuerda.
-  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Trabajo Traffix, Trabajo secundario, Iglesia, Familia, Carrera, IA Dev, Universidad, Personales, Matrimonio; por defecto Personales; usa Iglesia si hay entrevista, reunión, primaria, templo, seminario, etc.), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
+  data debe incluir: "Name" (string, título claro; puede incluir fecha en lenguaje natural, el servidor la separa), "Area" (una de: Matrimonio, Martin, Yulis, Personales, Iglesia, Proyecto, Tareas_u, Universidad, Trabajo; por defecto Personales; usa Iglesia si hay entrevista, reunión, primaria, templo, seminario, etc.), "Fecha" (string YYYY-MM-DD o "" si no aplica; si Name ya trae la fecha natural, puedes dejar Fecha en "").
   Opcional si Area es Iglesia: "organizacion" (Obispado|RP|Seminarios|Templo e Historia Familiar|As|Primaria), "tipoIglesia" (Reuniones|Llamamientos|Seguimientos|Entrevistas|Actividades). Si no estás seguro, omítelos.
 - NOTE: el usuario quiere guardar una nota, idea, reflexión o texto para el inbox (no es una tarea accionable como lista de pendientes).
   data debe incluir: "title" (resumen corto), "content" (texto completo del mensaje o la nota).
@@ -101,7 +103,7 @@ Reglas de fecha:
 /** Cuerpo /help en texto plano (sin parse_mode: los `<>` rompen HTML de Telegram). */
 const helpMessage = `
 __________________________________________________________________
-📖 Manual de Aura AI v3.1.0
+📖 Manual de Aura AI v3.1.1
 
 🛠 Gestión de Tareas
 
@@ -800,15 +802,6 @@ function formatTaskDateLabel(fechaYmd) {
     }).format(date);
 }
 
-function escapeTelegramMarkdown(text) {
-    return String(text || "")
-        .replace(/\\/g, "\\\\")
-        .replace(/\*/g, "\\*")
-        .replace(/_/g, "\\_")
-        .replace(/\[/g, "\\[")
-        .replace(/`/g, "\\`");
-}
-
 /**
  * @param {Array<{ name?: string, area?: string, fechaYmd?: string }>} tasks
  * @param {number} pageZeroBased
@@ -846,7 +839,9 @@ function buildListCommandMessage(tasks, pageZeroBased, pageSize = COMMAND_TASKS_
             return `${line}\n📅 *${taskDateLabel}*`;
         })
         .join("\n\n");
-    return { text: `${header}${body}`, page: safePage, totalPages };
+    // Reminder sobre el conjunto completo (no solo la página), al final del listado.
+    const reminder = buildUnconfiguredReminder(allTasks);
+    return { text: `${header}${body}${reminder}`, page: safePage, totalPages };
 }
 
 function buildListCommandKeyboard(tasks, commandKey, pageZeroBased, pageSize = COMMAND_TASKS_PAGE_SIZE) {
@@ -911,14 +906,17 @@ function buildPendingTasksListMarkdown(tasks, page, pageSize = TASKS_PAGE_SIZE) 
     const { page: p, totalPages } = clampTaskListPage(page, tasks.length, pageSize);
     const start = p * pageSize;
     const slice = tasks.slice(start, start + pageSize);
-    const lines = slice.map(
-        (t, i) => `${start + i + 1}. 📌 [${t.area}] — ${t.name} (${t.status})`
-    );
+    const lines = slice.map((t, i) => {
+        const area = escapeTelegramMarkdown(t.area || "---");
+        const name = escapeTelegramMarkdown(t.name || "Sin título");
+        const status = escapeTelegramMarkdown(t.status || "---");
+        return `${start + i + 1}. 📌 [${area}] — ${name} (${status})`;
+    });
     let header = "📋 Tus tareas";
     if (tasks.length > pageSize) {
         header += ` _(página ${p + 1}/${totalPages})_`;
     }
-    return `${header}:\n${lines.join("\n")}`;
+    return `${header}:\n${lines.join("\n")}${buildUnconfiguredReminder(tasks)}`;
 }
 
 /**

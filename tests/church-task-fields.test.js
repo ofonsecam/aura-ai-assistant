@@ -109,8 +109,8 @@ test("un área explícita distinta no se sobrescribe por palabras de iglesia", a
         Name: "Trabajo Traffix/ entrevista con cliente",
         Area: "Personales",
     });
-    assert.equal(result.area, "Trabajo Traffix");
-    assert.equal(properties.Area.select.name, "Trabajo Traffix");
+    assert.equal(result.area, "Trabajo");
+    assert.equal(properties.Area.select.name, "Trabajo");
     assert.equal(properties[PROP_TASK_ORGANIZACION], undefined);
     assert.equal(properties[PROP_TASK_TIPO_IGLESIA], undefined);
 });
