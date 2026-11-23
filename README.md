@@ -4,54 +4,72 @@ Aura AI conecta Telegram, Notion y modelos de IA para capturar tareas por voz o 
 
 ## Description
 
-Desarrollé un ecosistema de automatización proactiva integrando Telegram Bot API y Notion API mediante Node.js y Vercel Serverless Functions. Implementé un sistema de enrutamiento híbrido para optimizar el consumo de tokens de LLM (Gemini API), delegando comandos deterministas a un motor de búsqueda difusa (Algoritmo de Levenshtein). El sistema incluye procesos proactivos (Cron Jobs) para el análisis de cumplimiento de plazos y generación de reportes de productividad semanal, operando bajo una arquitectura de bajo costo y alta disponibilidad.
+Ecosistema de automatización proactiva con Telegram Bot API y Notion API sobre Node.js / Vercel Serverless. Enruta comandos deterministas (fuzzy search / Levenshtein) y delega lenguaje natural a Gemini, con crons para resúmenes, hábitos, aseo y reportes semanales.
 
 ## Features
 
-- **Hybrid Routing** — Enrutamiento flexible entre comandos, notas de voz y flujos automáticos.
-- **Fuzzy Search** — Búsqueda tolerante a variaciones al consultar o filtrar tareas.
-- **Overdue Alerts** — Avisos cuando hay tareas vencidas o próximas a vencer.
-- **Cron Jobs** — Tareas programadas en Vercel para resúmenes y recordatorios recurrentes.
+- **Hybrid Routing** — Comandos slash, prefijos (`Área/`, `T/`, `meeting/`) y flujos de voz/texto vía Telegram.
+- **Fuzzy Search** — Búsqueda tolerante al marcar o filtrar tareas.
+- **Overdue Alerts** — Avisos de vencidas en los resúmenes programados.
+- **Cron Jobs** — Recordatorios y reportes en Vercel (autenticados con `CRON_SECRET`).
+
+## Entrypoints activos (`api/`)
+
+| Ruta | Disparador |
+|------|------------|
+| `/api/telegram-webhook` | Webhook de Telegram |
+| `/api/cron-summary` | Cron (4× día) |
+| `/api/cron-daily-close` | Cron (cierre diario) |
+| `/api/cron-weekly` | Cron (semanal) |
+| `/api/cron-habitos` | Cron (3× día) |
+| `/api/cron-aseo` | Cron (lun–vie, 2×) |
+| `/api/cron-detalle` | Cron (jueves) |
+
+Endpoints legacy eliminados: `api/notion.js`, `api/process-voice.js`, `api/cron-weekly-summary.js`.
 
 ## Comandos manuales
 
 | Comando | Uso |
 |--------|-----|
-| `/lista` | Lista o consulta de tareas según la lógica del bot. |
-| `/help` | Ayuda y descripción de comandos. |
-| `T/` | Registrar tensión arterial en `DB_Tension` (`T/ Oscar 126/86`). |
-| Salto de cuerda | En lenguaje natural: `completé salto s1d1, 30/30, todo bien` → `DB_Workout_Tracker`. |
-| `+` | Añadir o registrar una tarea (según el contexto del mensaje). |
-| `hecho` | Marcar tarea(s) como completadas. |
-| `borrar` | Eliminar tarea(s) indicadas. |
+| `/help` | Manual de comandos. |
+| `/ld` `/lm` `/lv` | Tareas de hoy, mañana o vencidas. |
+| `/h` | Hábitos pendientes del día. |
+| `/aseo` | Limpieza del día. |
+| `/movilidad` | Rutina de movilidad activa. |
+| `/syncminutas` | Tareas desde minutas listas en Notion. |
+| `/gasto` | Registrar gasto fiscal. |
+| `/detalle` | Idea de detalle para Yulian. |
+| `T/` | Registrar tensión (`T/ Oscar 126/86`). |
+| Salto de cuerda | Lenguaje natural → `DB_Workout_Tracker`. |
 
 ## Variables de entorno
 
-Configura estas variables en Vercel (o en un archivo `.env` local con `vercel dev`):
+Configura estas variables en Vercel (o `.env.local` con `vercel dev`). Referencia completa: `.env.example`.
 
 | Variable | Descripción |
 |----------|-------------|
-| `NOTION_TOKEN` | Token de integración de Notion (Internal Integration). |
-| `NOTION_DATABASE_ID` | ID de la base de datos donde se crean y consultan las tareas. |
-| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (`BotFather`). |
-| `MY_TELEGRAM_CHAT_ID` | Chat ID al que el bot envía resúmenes y alertas (crons). |
-| `GEMINI_API_KEY` | Clave de la API de Google AI (Gemini) para transcripción y extracción estructurada desde audio. |
-| `NOTION_DB_TENSION_ID` | ID de la base `DB_Tension` (tomas de presión arterial). |
-| `NOTION_WORKOUT_DB_ID` | ID de la base `DB_Workout_Tracker` (sesiones de salto de cuerda). |
+| `TELEGRAM_BOT_TOKEN` | Token del bot (`BotFather`). |
+| `MY_TELEGRAM_CHAT_ID` | Chat destino de crons / alertas. |
+| `CRON_SECRET` | Secreto Bearer que Vercel envía a los crons. |
+| `NOTION_TOKEN` | Token de la integración Notion. |
+| `NOTION_DATABASE_ID` | Base de tareas. |
+| `NOTION_MINUTAS_ID` | Base de minutas para `/syncminutas`. |
+| `GEMINI_API_KEY` | Google AI (Gemini). |
+| `NOTION_DB_TENSION_ID` | Base `DB_Tension`. |
+| `NOTION_WORKOUT_DB_ID` | Base `DB_Workout_Tracker`. |
 
-> **Nota:** Si añades otras integraciones (p. ej. webhooks adicionales), documenta aquí cualquier variable extra que uses.
+## Cron schedules (UTC → Bogotá UTC−5)
 
-## Cron schedules (COT)
+Definidos en `vercel.json`. Todos requieren `Authorization: Bearer <CRON_SECRET>`.
 
-Los resúmenes y alertas por cron están pensados para ejecutarse **tres veces al día** en horario **Colombia (COT, UTC−5)**:
-
-- **7:30 AM** — Inicio de jornada.
-- **12:30 PM** — Mediodía.
-- **4:30 PM** — Final de la tarde.
-
-En `vercel.json`, las expresiones cron usan **UTC**; las horas anteriores en COT corresponden a los `schedule` definidos para `/api/cron-summary` (ajusta si cambias de zona o de horario).
-
-Además existe un job semanal en `/api/cron-weekly` (por ejemplo resumen semanal); revisa `vercel.json` para la expresión exacta.
+| Path | Schedule UTC | Bogotá (aprox.) |
+|------|--------------|-----------------|
+| `/api/cron-summary` | `20 12`, `30 15`, `30 18`, `30 21` | 07:20, 10:30, 13:30, 16:30 |
+| `/api/cron-daily-close` | `30 0 * * *` | 19:30 |
+| `/api/cron-weekly` | `0 0 * * 1` | domingo 19:00 |
+| `/api/cron-habitos` | `50 10`, `0 19`, `0 0` | 05:50, 14:00, 19:00 |
+| `/api/cron-aseo` | `30 15`, `30 20` (lun–vie) | 10:30, 15:30 |
+| `/api/cron-detalle` | `0 21 * * 4` | jueves 16:00 |
 
 ---
 

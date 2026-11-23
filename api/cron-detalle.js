@@ -1,20 +1,9 @@
 /**
  * Recordatorio semanal de un detalle para Yulian (Vercel Cron).
- * Jueves 21:00 UTC → ver vercel.json.
+ * Schedule UTC en vercel.json: `0 21 * * 4` → jueves 16:00 Bogotá (UTC−5).
  */
 const { generarIdeaDetalle } = require("../lib/geminiService");
-
-function verifyCronAuthorization(req) {
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) {
-        return { ok: false, status: 500, error: "CRON_SECRET no configurado." };
-    }
-    const authHeader = req.headers?.authorization;
-    if (authHeader !== `Bearer ${cronSecret}`) {
-        return { ok: false, status: 401, error: "Unauthorized" };
-    }
-    return { ok: true };
-}
+const { verifyCronAuthorization } = require("../lib/cronAuth");
 
 async function handler(req, res) {
     const auth = verifyCronAuthorization(req);

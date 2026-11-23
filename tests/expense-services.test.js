@@ -6,7 +6,7 @@ const path = require("node:path");
 const notionServicePath = path.resolve(__dirname, "../lib/notionService.js");
 const driveServicePath = path.resolve(__dirname, "../lib/driveService.js");
 const notionClientPath = require.resolve("@notionhq/client");
-const googleapisPath = require.resolve("googleapis");
+const driveSdkPath = require.resolve("@googleapis/drive");
 
 function mockModule(modulePath, exports) {
     require.cache[modulePath] = { id: modulePath, filename: modulePath, loaded: true, exports };
@@ -154,13 +154,11 @@ function loadDriveService(captured) {
             },
         },
     };
-    mockModule(googleapisPath, {
-        google: {
-            auth: { OAuth2: FakeOAuth2 },
-            drive: (opts) => {
-                captured.driveOptions = opts;
-                return drive;
-            },
+    mockModule(driveSdkPath, {
+        auth: { OAuth2: FakeOAuth2 },
+        drive: (opts) => {
+            captured.driveOptions = opts;
+            return drive;
         },
     });
     delete require.cache[driveServicePath];

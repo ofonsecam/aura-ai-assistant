@@ -1,12 +1,19 @@
 /**
  * Recordatorios proactivos de hábitos pendientes (Vercel Cron).
- * Horarios COL (UTC-5): 05:50, 14:00 y 19:00 → ver vercel.json.
+ * Schedules UTC en vercel.json: `50 10`, `0 19`, `0 0` * * *
+ * → Bogotá (UTC−5): 05:50, 14:00, 19:00.
  * Silencio total si no hay hábitos pendientes.
  */
 const { getPendingHabitsForToday } = require("../lib/notionTaskPage");
 const { buildHabitsPendingMessage, buildHabitsPendingKeyboard } = require("../lib/habitTelegramMenu");
+const { verifyCronAuthorization } = require("../lib/cronAuth");
 
 async function handler(req, res) {
+    const auth = verifyCronAuthorization(req);
+    if (!auth.ok) {
+        return res.status(auth.status).json({ error: auth.error });
+    }
+
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 

@@ -1,10 +1,17 @@
-const { getDailyTasks, getOverdueTasks } = require("../lib/notionTaskPage");
-
 /**
- * Resumen de tareas del día (Vercel cron-summary, UTC → Bogotá):
- * 0 12, 0 15, 0 18, 0 21, 0 1 * * * → 7:00, 10:00, 13:00, 16:00 y 20:00 COL.
+ * Resumen de tareas del día (Vercel Cron).
+ * Schedules UTC en vercel.json: `20 12`, `30 15`, `30 18`, `30 21` * * *
+ * → Bogotá (UTC−5): 07:20, 10:30, 13:30, 16:30.
  */
+const { getDailyTasks, getOverdueTasks } = require("../lib/notionTaskPage");
+const { verifyCronAuthorization } = require("../lib/cronAuth");
+
 async function handler(req, res) {
+    const auth = verifyCronAuthorization(req);
+    if (!auth.ok) {
+        return res.status(auth.status).json({ error: auth.error });
+    }
+
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 

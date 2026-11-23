@@ -1,8 +1,9 @@
 /**
- * Resumen semanal (Vercel: `0 1 * * 1` UTC = domingo 20:00 Bogotá).
- * Encabezado de logros (últimos 7 días, Estado Hecho) + reporte detallado semanal.
+ * Resumen semanal: logros (últimos 7 días) + reporte detallado.
+ * Schedule UTC en vercel.json: `0 0 * * 1` → domingo 19:00 Bogotá (UTC−5).
  */
 const { getWeeklyCronReportData, getCompletedTasksCountLast7DaysBogota } = require("../lib/notionTaskPage");
+const { verifyCronAuthorization } = require("../lib/cronAuth");
 
 /** Evita romper Markdown de Telegram en nombres de tarea. */
 function safeTelegramMdLine(s) {
@@ -17,18 +18,6 @@ function safeTelegramMdLine(s) {
 function bulletBlock(items, formatLine) {
     if (!items.length) return "_Sin ítems en esta sección._";
     return items.map((row) => formatLine(row)).join("\n");
-}
-
-function verifyCronAuthorization(req) {
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) {
-        return { ok: false, status: 500, error: "CRON_SECRET no configurado." };
-    }
-    const authHeader = req.headers?.authorization;
-    if (authHeader !== `Bearer ${cronSecret}`) {
-        return { ok: false, status: 401, error: "Unauthorized" };
-    }
-    return { ok: true };
 }
 
 async function handler(req, res) {

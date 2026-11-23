@@ -1,6 +1,6 @@
 /**
- * Cierre de noche (20:30 America/Bogota): logros del día + plan mañana + pendientes semanales.
- * Vercel cron: 30 1 * * * UTC (= 20:30 Bogotá).
+ * Cierre de jornada: logros del día + plan mañana + pendientes semanales.
+ * Schedule UTC en vercel.json: `30 0 * * *` → Bogotá (UTC−5): 19:30.
  */
 const { getCompletedTasksTodayBogota, getTomorrowTasks, getWeeklyTasks } = require("../lib/notionTaskPage");
 const {
@@ -8,6 +8,7 @@ const {
     buildUnconfiguredReminder,
     escapeTelegramMarkdown,
 } = require("../lib/categoryPriority");
+const { verifyCronAuthorization } = require("../lib/cronAuth");
 
 /** Sustituye especiales para poder envolver el área en _cursiva_ sin romper Markdown. */
 function safeTelegramMdLine(s) {
@@ -39,6 +40,11 @@ function formatPendingTasksList(tasks) {
 }
 
 async function handler(req, res) {
+    const auth = verifyCronAuthorization(req);
+    if (!auth.ok) {
+        return res.status(auth.status).json({ error: auth.error });
+    }
+
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 

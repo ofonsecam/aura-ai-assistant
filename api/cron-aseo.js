@@ -1,6 +1,7 @@
 /**
  * Recordatorios proactivos de aseo pendiente (Vercel Cron).
- * Horarios COL (UTC-5), lun–vie: 10:30 y 15:30 → ver vercel.json.
+ * Schedules UTC en vercel.json: `30 15 * * 1-5`, `30 20 * * 1-5`
+ * → Bogotá (UTC−5), lun–vie: 10:30 y 15:30.
  * Silencio total si no hay pendientes.
  */
 const { getPendingCleaningForToday } = require("../src/modules/cleaning/cleaningNotion");
@@ -8,8 +9,14 @@ const {
     buildCleaningPendingMessage,
     buildCleaningPendingKeyboard,
 } = require("../src/modules/cleaning/cleaningTelegramMenu");
+const { verifyCronAuthorization } = require("../lib/cronAuth");
 
 async function handler(req, res) {
+    const auth = verifyCronAuthorization(req);
+    if (!auth.ok) {
+        return res.status(auth.status).json({ error: auth.error });
+    }
+
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.MY_TELEGRAM_CHAT_ID;
 
